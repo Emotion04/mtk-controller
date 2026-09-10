@@ -1,0 +1,38 @@
+# Reverse engineering artifacts — large / regenerateable binaries
+*.apk
+*.bin
+*.dex
+*.idsig
+*.so
+*.jar
+*.zip
+*.sig
+maps.txt
+sr_names.txt
+
+# Extracted / generated output
+cfr_out/
+apktool_out2/
+
+# Third-party tools (download separately)
+tools/
+
+# Android build artifacts (mtk-optimizer sub-project handles its own)
+*.iml
+.gradle
+.kotlin
+build/
+captures/
+local.properties
+
+# IDE / OS junk
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# Claude Code
+.claude/
