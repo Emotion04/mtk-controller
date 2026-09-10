@@ -2,10 +2,12 @@ package magicau.mtkcontroller.feature.diag
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.data.diag.CapabilityReport
 import magicau.mtkcontroller.data.diag.CheckCategory
 import magicau.mtkcontroller.data.privilege.PrivilegeManager
@@ -28,7 +30,9 @@ class DiagViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
-            val report = container.capabilityProbe.probe()
+            // The probe does shell round-trips and directory walks; none of that
+            // belongs on the thread drawing the screen.
+            val report = withContext(Dispatchers.IO) { container.capabilityProbe.probe() }
             _state.value = DiagUiState(loading = false, report = report)
         }
     }

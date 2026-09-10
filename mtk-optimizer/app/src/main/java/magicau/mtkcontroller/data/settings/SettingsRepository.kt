@@ -1,22 +1,19 @@
 package magicau.mtkcontroller.data.settings
 
 import android.content.Context
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
+import magicau.mtkcontroller.data.settingsStore
 import magicau.mtkcontroller.domain.model.DEFAULT_HOME_CARDS
 import magicau.mtkcontroller.domain.model.HomeCard
 import magicau.mtkcontroller.domain.model.HomeCardType
 import java.util.UUID
-
-private val Context.settingsStore: DataStore<Preferences> by preferencesDataStore(name = "mtk_optimizer_settings")
 
 /**
  * User preferences that are not part of a profile: which tab to open on launch,
@@ -34,7 +31,10 @@ class SettingsRepository(private val context: Context) {
     private val paletteKey = stringPreferencesKey("theme_palette")
     private val navBarStyleKey = stringPreferencesKey("nav_bar_style")
     private val navBarCustomKey = stringPreferencesKey("nav_bar_custom_palette")
-    private val cpuControlKey = stringPreferencesKey("cpu_control_style")
+    private val themeModeKey = stringPreferencesKey("theme_mode")
+    private val logLevelKey = stringPreferencesKey("log_level")
+    private val applyModeKey = stringPreferencesKey("apply_mode")
+    private val reapplyIntervalKey = longPreferencesKey("reapply_interval_ms")
 
     val defaultTabRoute: Flow<String?> = context.settingsStore.data.map { it[defaultTabKey] }
 
@@ -57,11 +57,46 @@ class SettingsRepository(private val context: Context) {
         context.settingsStore.edit { it[navBarCustomKey] = name }
     }
 
-    val cpuControlStyle: Flow<String> =
-        context.settingsStore.data.map { it[cpuControlKey] ?: "RANGE_SLIDER" }
+    val themeMode: Flow<String> = context.settingsStore.data.map { it[themeModeKey] ?: "SYSTEM" }
 
-    suspend fun setCpuControlStyle(name: String) {
-        context.settingsStore.edit { it[cpuControlKey] = name }
+    suspend fun setThemeMode(name: String) {
+        context.settingsStore.edit { it[themeModeKey] = name }
+    }
+
+    val logLevel: Flow<String> = context.settingsStore.data.map { it[logLevelKey] ?: "INFO" }
+
+    suspend fun setLogLevel(name: String) {
+        context.settingsStore.edit { it[logLevelKey] = name }
+    }
+
+    val applyMode: Flow<String> = context.settingsStore.data.map { it[applyModeKey] ?: "SINGLE" }
+
+    suspend fun setApplyMode(name: String) {
+        context.settingsStore.edit { it[applyModeKey] = name }
+    }
+
+    /** Bounded so a typo cannot turn into a binder hammering loop. */
+    val reapplyIntervalMs: Flow<Long> = context.settingsStore.data.map {
+        (it[reapplyIntervalKey] ?: DEFAULT_REAPPLY_INTERVAL_MS)
+            .coerceIn(MIN_REAPPLY_INTERVAL_MS, MAX_REAPPLY_INTERVAL_MS)
+    }
+
+    suspend fun setReapplyIntervalMs(value: Long) {
+        context.settingsStore.edit {
+            it[reapplyIntervalKey] = value.coerceIn(MIN_REAPPLY_INTERVAL_MS, MAX_REAPPLY_INTERVAL_MS)
+        }
+    }
+
+    companion object {
+        const val DEFAULT_REAPPLY_INTERVAL_MS = 2_000L
+
+        /**
+         * Each tick costs a release + acquire round trip. Below ~250 ms the
+         * binder traffic stops being free and the request never settles, so
+         * this is a hard floor rather than a suggestion.
+         */
+        const val MIN_REAPPLY_INTERVAL_MS = 250L
+        const val MAX_REAPPLY_INTERVAL_MS = 600_000L
     }
 
     val homeCards: Flow<List<HomeCard>> = context.settingsStore.data.map { prefs ->
@@ -111,6 +146,9 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun resetCards() = write(DEFAULT_HOME_CARDS)
+
+    /** Wholesale replace, used by backup import. */
+    suspend fun replaceCards(cards: List<HomeCard>) = write(cards)
 
     private suspend fun write(cards: List<HomeCard>) {
         context.settingsStore.edit { it[homeCardsKey] = json.encodeToString(cards) }

@@ -2,17 +2,20 @@ package magicau.mtkcontroller.feature.cpu
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import magicau.mtkcontroller.data.cpu.CpuTuner
+import kotlinx.coroutines.withContext
+import magicau.mtkcontroller.data.cpu.CpuControl
+import magicau.mtkcontroller.data.powerhal.PowerHal
 import magicau.mtkcontroller.data.privilege.PrivilegeManager
+import magicau.mtkcontroller.data.privilege.PrivilegeMode
 import magicau.mtkcontroller.di.AppContainer
 import magicau.mtkcontroller.domain.model.ClusterSetting
 import magicau.mtkcontroller.domain.model.CpuCluster
-import magicau.mtkcontroller.domain.model.CpuControlStyle
 import magicau.mtkcontroller.domain.model.Profile
 import java.util.UUID
 
@@ -27,13 +30,25 @@ data class ClusterEdit(
     val maxFreqKhz: Long get() = cluster.availableFreqs.getOrElse(maxIndex) { cluster.maxFreqKhz }
 }
 
+/**
+ * Whether frequency control can be applied right now, and if not, why.
+ *
+ * This is recomputed whenever the privilege state changes instead of being
+ * sampled once when the screen first opened — that snapshot was why the Apply
+ * button stayed greyed out after Shizuku had in fact been authorised.
+ */
+data class PowerHalStatus(
+    val checked: Boolean = false,
+    val available: Boolean = false,
+    val reason: String? = null,
+)
+
 data class CpuUiState(
     val loading: Boolean = true,
     val busy: Boolean = false,
     val edits: List<ClusterEdit> = emptyList(),
-    val powerHalAvailable: Boolean = false,
+    val powerHal: PowerHalStatus = PowerHalStatus(),
     val activeProfileName: String? = null,
-    val controlStyle: CpuControlStyle = CpuControlStyle.RANGE_SLIDER,
     val message: String? = null,
 )
 
@@ -44,17 +59,45 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            container.settingsRepository.cpuControlStyle.collect { name ->
-                _state.value = _state.value.copy(controlStyle = CpuControlStyle.fromName(name))
-            }
+            PrivilegeManager.state.collect { refreshPowerHalStatus(it.mode, it.permissionGranted) }
         }
         refresh()
+    }
+
+    /**
+     * Resolve PowerHAL availability off the main thread. Resolving the hidden
+     * service is a blocking transaction into Shizuku, so it cannot run inline.
+     */
+    private fun refreshPowerHalStatus(mode: PrivilegeMode, permissionGranted: Boolean) {
+        viewModelScope.launch {
+            val available = mode.canElevate && PowerHal.isAvailableNow()
+            val reason = when {
+                available -> null
+                !permissionGranted -> "需要先授权 Shizuku 才能调频"
+                !mode.canElevate -> "Shizuku 未运行或未授权,无法调频"
+                else -> "已授权,但未找到 PowerHAL 服务 —— 非 MTK 设备无法调频"
+            }
+            _state.value = _state.value.copy(
+                powerHal = PowerHalStatus(checked = true, available = available, reason = reason),
+            )
+        }
+    }
+
+    /**
+     * Re-poll PowerHAL availability without rescanning the clusters, for when
+     * the screen comes back to the foreground — the user may have just granted
+     * Shizuku in another app.
+     */
+    fun recheckPowerHal() {
+        PrivilegeManager.refresh()
+        val current = PrivilegeManager.state.value
+        refreshPowerHalStatus(current.mode, current.permissionGranted)
     }
 
     fun refresh() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
-            val clusters = container.cpuScanner.scan()
+            val clusters = withContext(Dispatchers.IO) { container.cpuScanner.scan() }
             val edits = clusters.map { cluster ->
                 val lo = cluster.availableFreqs.indexOfFirst { it >= cluster.minFreqKhz }
                     .takeIf { it >= 0 } ?: 0
@@ -66,37 +109,21 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
             val activeName = activeId?.let { id ->
                 container.profileRepository.profiles.first().firstOrNull { it.id == id }?.name
             }
-            _state.value = CpuUiState(
+            // Record the untouched limits while nothing of ours is applied, so
+            // a later release can be judged against them.
+            container.cpuControl.captureBaselineIfClean(clusters)
+            _state.value = _state.value.copy(
                 loading = false,
                 edits = edits,
-                controlStyle = _state.value.controlStyle,
-                powerHalAvailable = PrivilegeManager.state.value.mode.canElevate &&
-                    magicau.mtkcontroller.data.powerhal.PowerHal.isAvailable(),
                 activeProfileName = activeName,
             )
+            refreshPowerHalStatus(PrivilegeManager.state.value.mode, PrivilegeManager.state.value.permissionGranted)
         }
-    }
-
-    fun setMin(index: Int, value: Int) = update(index) { edit ->
-        // Dragging min past max pushes max along instead of producing an invalid range.
-        val min = value.coerceIn(0, edit.maxIndex)
-        edit.copy(minIndex = min)
-    }
-
-    fun setMax(index: Int, value: Int) = update(index) { edit ->
-        val max = value.coerceIn(edit.minIndex, edit.cluster.availableFreqs.lastIndex.coerceAtLeast(0))
-        edit.copy(maxIndex = max)
     }
 
     fun setGovernor(index: Int, governor: String) = update(index) { it.copy(governor = governor) }
 
-    /** Single-slider style: lock the cluster to one frequency. */
-    fun lockTo(index: Int, freqIndex: Int) = update(index) { edit ->
-        val clamped = freqIndex.coerceIn(0, edit.cluster.availableFreqs.lastIndex.coerceAtLeast(0))
-        edit.copy(minIndex = clamped, maxIndex = clamped)
-    }
-
-    /** Segmented bar style: set an explicit [min, max] pair. */
+    /** Set an explicit [min, max] pair; order does not matter. */
     fun setRange(index: Int, minIndex: Int, maxIndex: Int) = update(index) { edit ->
         val last = edit.cluster.availableFreqs.lastIndex.coerceAtLeast(0)
         val lo = minIndex.coerceIn(0, last)
@@ -123,8 +150,10 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
                     governor = it.governor,
                 )
             }
-            val outcome = container.cpuTuner.apply(edits.map { it.cluster }, settings)
-            outcome.handler?.let { container.profileRepository.setCpuHandler(it) }
+            // CpuControl owns the whole release-then-acquire sequence, the
+            // handle bookkeeping and the governor side of it.
+            val outcome = container.cpuControl.apply(edits.map { it.cluster }, settings)
+            if (outcome.success) container.syncCpuReapply()
             _state.value = _state.value.copy(busy = false, message = outcome.message)
         }
     }
@@ -132,9 +161,11 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
     fun release() {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
-            val handler = container.profileRepository.cpuHandler()
-            val outcome = container.cpuTuner.release(handler)
-            if (outcome.success) container.profileRepository.setCpuHandler(0)
+            val clusters = _state.value.edits.map { it.cluster }
+                .ifEmpty { withContext(Dispatchers.IO) { container.cpuScanner.scan(deep = false) } }
+            val outcome = container.cpuControl.release(clusters)
+            // Polling would just re-acquire what we released.
+            CpuReapplyService.stop(container.context)
             _state.value = _state.value.copy(busy = false, message = outcome.message)
         }
     }
@@ -160,10 +191,12 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
             val clusters = _state.value.edits.map { it.cluster }
-                .ifEmpty { container.cpuScanner.scan() }
-            val outcome = container.cpuTuner.apply(clusters, profile.clusters)
-            outcome.handler?.let { container.profileRepository.setCpuHandler(it) }
-            if (outcome.success) container.profileRepository.setActiveProfile(profile.id)
+                .ifEmpty { withContext(Dispatchers.IO) { container.cpuScanner.scan() } }
+            val outcome = container.cpuControl.apply(clusters, profile.clusters)
+            if (outcome.success) {
+                container.profileRepository.setActiveProfile(profile.id)
+                container.syncCpuReapply()
+            }
             _state.value = _state.value.copy(
                 busy = false,
                 message = outcome.message,
@@ -178,7 +211,4 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Exposed for the diagnostics screen. */
     suspend fun clusters(): List<CpuCluster> = container.cpuScanner.scan()
-
-    @Suppress("unused")
-    private val tuner: CpuTuner = container.cpuTuner
 }

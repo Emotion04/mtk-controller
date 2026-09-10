@@ -36,3 +36,9 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Local scratch — working files kept out of the repository.
+_*
+tmp/
+g*.json
+gh*.json

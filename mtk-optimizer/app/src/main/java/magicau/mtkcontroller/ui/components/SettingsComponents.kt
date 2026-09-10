@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import magicau.mtkcontroller.ui.theme.adaptiveAccent
+import magicau.mtkcontroller.ui.theme.isDarkScheme
 
 /**
  * Grouped settings card: a clean white panel lifted off the light grey ground
@@ -74,6 +76,11 @@ fun SettingsRow(
     val base = Modifier.fillMaxWidth()
     val clickable = if (onClick != null) base.clickable(onClick = onClick) else base
 
+    // Section accents are picked to read on a white card; on a dark card the
+    // deeper ones (navy, forest, plum) disappear into the tile, so lift them
+    // here once rather than at every call site.
+    val tint = iconTint.adaptiveAccent(isDarkScheme())
+
     Row(
         modifier = clickable.padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -83,13 +90,13 @@ fun SettingsRow(
             modifier = Modifier
                 .size(32.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(iconTint.copy(alpha = 0.14f)),
+                .background(tint.copy(alpha = 0.14f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = iconTint,
+                tint = tint,
                 modifier = Modifier.size(18.dp),
             )
         }

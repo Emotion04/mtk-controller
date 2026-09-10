@@ -2,14 +2,16 @@ package magicau.mtkcontroller.feature.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import magicau.mtkcontroller.data.cpu.CpuTuner
+import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.di.AppContainer
 import magicau.mtkcontroller.domain.model.Profile
+import magicau.mtkcontroller.feature.cpu.CpuReapplyService
 
 data class ProfileUiState(
     val loading: Boolean = true,
@@ -45,8 +47,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(busy = false, message = "未检测到 CPU 簇,无法套用")
                 return@launch
             }
-            val outcome = CpuTuner().apply(clusters, profile.clusters)
-            outcome.handler?.let { container.profileRepository.setCpuHandler(it) }
+            val outcome = container.cpuControl.apply(clusters, profile.clusters)
             if (outcome.success) container.profileRepository.setActiveProfile(profile.id)
             _state.value = _state.value.copy(busy = false, message = outcome.message)
         }
@@ -69,12 +70,11 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
     fun release() {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
-            val handler = container.profileRepository.cpuHandler()
-            val outcome = container.cpuTuner.release(handler)
-            if (outcome.success) {
-                container.profileRepository.setCpuHandler(0)
-                container.profileRepository.setActiveProfile(null)
-            }
+            val clusters = withContext(Dispatchers.IO) { container.cpuScanner.scan(deep = false) }
+            val outcome = container.cpuControl.release(clusters)
+            if (outcome.success) container.profileRepository.setActiveProfile(null)
+            // Polling would just re-acquire what we released.
+            CpuReapplyService.stop(container.context)
             _state.value = _state.value.copy(busy = false, message = outcome.message)
         }
     }

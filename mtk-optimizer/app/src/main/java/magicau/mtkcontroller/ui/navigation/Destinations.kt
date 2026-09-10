@@ -40,4 +40,5 @@ object SubRoutes {
     const val DIAGNOSTICS = "settings/diagnostics"
     const val NOTIFICATIONS = "settings/notifications"
     const val TWEAKS = "settings/tweaks"
+    const val LOGS = "settings/logs"
 }

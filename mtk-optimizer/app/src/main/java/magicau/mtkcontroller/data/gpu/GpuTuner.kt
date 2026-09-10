@@ -1,6 +1,5 @@
 package magicau.mtkcontroller.data.gpu
 
-import magicau.mtkcontroller.data.powerhal.PowerHal
 import magicau.mtkcontroller.data.sysfs.Sysfs
 import magicau.mtkcontroller.domain.model.GpuChannel
 import magicau.mtkcontroller.domain.model.GpuInfo

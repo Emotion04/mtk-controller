@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import magicau.mtkcontroller.data.log.AppLog
+import magicau.mtkcontroller.data.log.LogLevel
 import magicau.mtkcontroller.data.privilege.PrivilegeManager
 import magicau.mtkcontroller.di.AppContainer
 
@@ -26,5 +28,11 @@ class MtkApp : Application() {
         container = AppContainer(this)
         PrivilegeManager.init(this)
         appScope.launch { container.settingsRepository.migrateIfNeeded() }
+        appScope.launch {
+            container.settingsRepository.logLevel.collect { AppLog.setLevel(LogLevel.fromName(it)) }
+        }
+        // Restore the CPU control bookkeeping before any screen can act on it.
+        appScope.launch { container.cpuControl.load() }
+        AppLog.i("App", "MTK God 启动")
     }
 }

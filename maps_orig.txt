@@ -1,1 +1,0 @@
-adb.exe: no devices/emulators found

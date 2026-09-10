@@ -1,9 +1,12 @@
 package magicau.mtkcontroller.ui.theme
 
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 /**
  * Selectable accent colours.
@@ -124,3 +127,13 @@ private fun Color.blend(other: Color, amount: Float): Color = Color(
 
 /** Deep accents are unreadable on a dark ground; lift them. */
 private fun Color.lightenForDark(): Color = blend(Color(0xFFFFFFFF), 0.45f)
+
+/**
+ * Section accents in the settings list are picked to sit on a white card.
+ * On a dark card the same values read as muddy near-black, so lift them.
+ */
+fun Color.adaptiveAccent(isDark: Boolean): Color = if (isDark) lightenForDark() else this
+
+/** Whether the current scheme is a dark one, judged by its background. */
+@Composable
+fun isDarkScheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f

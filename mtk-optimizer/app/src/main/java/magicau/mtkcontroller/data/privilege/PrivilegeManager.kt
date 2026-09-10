@@ -6,10 +6,12 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import magicau.mtkcontroller.IRuntimeService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 import kotlin.coroutines.resume
@@ -159,10 +161,17 @@ object PrivilegeManager {
 
     val isRemoteReady: Boolean get() = remote != null
 
-    /** Run a shell command in the elevated process. Returns null if unavailable. */
-    suspend fun exec(command: String): String? {
-        val service = remote ?: return null
-        return runCatching { service.exec(command) }.getOrNull()
+    /**
+     * Run a shell command in the elevated process. Returns null if unavailable.
+     *
+     * `service.exec` is a blocking AIDL transaction, and on the other side it
+     * spawns a real process and waits for it — tens of milliseconds, easily
+     * more. Callers sit on `Dispatchers.Main` by default (viewModelScope), so
+     * without this hop every probe would stall a frame.
+     */
+    suspend fun exec(command: String): String? = withContext(Dispatchers.IO) {
+        val service = remote ?: return@withContext null
+        runCatching { service.exec(command) }.getOrNull()
     }
 
     /** Wait for the UserService to finish binding, e.g. right after granting. */
@@ -181,8 +190,8 @@ object PrivilegeManager {
         } ?: false
 
     /** uid reported by the elevated process itself; null when not bound. */
-    suspend fun remoteUid(): Int? {
-        val service = remote ?: return null
-        return runCatching { service.uid }.getOrNull()
+    suspend fun remoteUid(): Int? = withContext(Dispatchers.IO) {
+        val service = remote ?: return@withContext null
+        runCatching { service.uid }.getOrNull()
     }
 }
