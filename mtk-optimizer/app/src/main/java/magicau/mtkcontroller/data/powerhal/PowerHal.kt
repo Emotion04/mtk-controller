@@ -18,10 +18,13 @@ import rikka.shizuku.SystemServiceHelper
  *  - `transact(0x16)` acquires a "handler" covering every cluster passed in,
  *    and returns its id; `transact(0x17)` releases that handler
  *  - each command id is `String.format("0x%08X", policyIndex * 0x100 + base)`,
- *    where the base selects which property is being set
+ *    which matches MediaTek's own layout, id = MAJOR<<22 | MINOR<<8 | INDEX
+ *  - the value array is `[id, value, id, value, …]`, so a floor and a ceiling
+ *    are two independent entries; sending min != max is how a range is asked
+ *    for, and MediaTek's own unit tests and powerhint XMLs do exactly that
  *
- * The reference app filled min/max/thermal-min/thermal-max with the *same*
- * frequency (a hard lock). Sending different min and max yields a real range.
+ * The reference app filled all four ids with the *same* frequency, which is a
+ * hard lock rather than a range — it had no range UI, not an API that lacks one.
  */
 object PowerHal {
 
@@ -31,11 +34,19 @@ object PowerHal {
     const val TRANSACT_ACQUIRE = 0x16
     const val TRANSACT_RELEASE = 0x17
 
-    // Bases for the per-cluster command ids (recovered constants).
-    const val BASE_MIN = 0x400000
-    const val BASE_MAX = 0x404000
-    const val BASE_THERMAL_MIN = 0x408000
-    const val BASE_THERMAL_MAX = 0x40c000
+    // Bases for the per-cluster command ids. Names taken from MediaTek's
+    // mtkperf_resource.h; each family is + 0x100 per cpufreq policy index.
+    const val BASE_MIN = 0x400000      // PERF_RES_CPUFREQ_MIN_CLUSTER_n
+    const val BASE_MAX = 0x404000      // PERF_RES_CPUFREQ_MAX_CLUSTER_n
+
+    /**
+     * Hard limits — a separate mechanism from the soft pair above, written by
+     * libpowerhal to /proc/ppm/policy/hard_userlimit_cpu_freq only. Setting
+     * both halves to one value hard-locks the cluster. Unused today; kept
+     * because the protocol is worth recording.
+     */
+    const val BASE_HARD_MIN = 0x408000 // PERF_RES_CPUFREQ_MIN_HL_CLUSTER_n
+    const val BASE_HARD_MAX = 0x40c000 // PERF_RES_CPUFREQ_MAX_HL_CLUSTER_n
 
     // GPU commands seen in the reference app's "GPU 拉满" path. The pairing
     // (which one is min, which is max) is inferred, not verified on-device.
@@ -49,8 +60,10 @@ object PowerHal {
         String.format("0x%08X", policyIndex * 0x100 + base)
 
     sealed interface Result {
-        data class Success(val handler: Int, val message: String) : Result
-        data class Failure(val message: String) : Result
+        val message: String
+
+        data class Success(val handler: Int, override val message: String) : Result
+        data class Failure(override val message: String) : Result
     }
 
     /** Resolve the hidden service and wrap it so transact runs in Shizuku's process. */
@@ -62,8 +75,21 @@ object PowerHal {
     fun isAvailable(): Boolean = binder() != null
 
     /**
+     * [isAvailable] off the main thread.
+     *
+     * Resolving the hidden service is a blocking transaction into Shizuku; on
+     * the main thread it costs frames, and it is called on every screen entry.
+     */
+    suspend fun isAvailableNow(): Boolean = withContext(Dispatchers.IO) { isAvailable() }
+
+    /**
      * Acquire a handler with a flat (commandId, value) array.
-     * The array must be even-sized: the reference app enforced `size % 2 == 0`.
+     *
+     * The array is the two interleaved — the reference app sent
+     * `["0x00c00000", "0", "0x00c00100", "0", …]` — so it must be built from
+     * both halves of each pair. Sending only the values produced an array of
+     * the wrong length with no command ids in it, which is not a request the
+     * service can act on; that is what [toIntValue]'s "0x…" branch exists for.
      */
     suspend fun acquire(pairs: List<Pair<String, String>>): Result = withContext(Dispatchers.IO) {
         if (pairs.isEmpty() || pairs.size % 2 != 0) {
@@ -71,13 +97,15 @@ object PowerHal {
         }
         val target = binder() ?: return@withContext Result.Failure("未获取到 PowerHAL 服务")
 
+        val commands = pairs.flatMap { listOf(it.first, it.second) }.map { it.toIntValue() }
+
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
         try {
             data.writeInterfaceToken(INTERFACE_TOKEN)
             data.writeInt(0)
             data.writeInt(0)
-            data.writeIntArray(pairs.map { it.second.toIntValue() }.toIntArray())
+            data.writeIntArray(commands.toIntArray())
 
             val ok = target.transact(TRANSACT_ACQUIRE, data, reply, 0)
             if (!ok) return@withContext Result.Failure("PowerHAL 调频请求失败")
@@ -97,23 +125,28 @@ object PowerHal {
         }
     }
 
-    /** Release a previously acquired handler. */
+    /**
+     * Release a previously acquired handler.
+     *
+     * The reference app calls this as `transact(0x17, parcel, null, 1)` — a
+     * oneway call with no reply parcel. Sending a reply and waiting for it
+     * (flags = 0) does not release the request, which is why releasing
+     * appeared to do nothing and the frequency limits stayed in force.
+     */
     suspend fun release(handler: Int): Result = withContext(Dispatchers.IO) {
         if (handler <= 0) return@withContext Result.Failure("没有可释放的请求")
         val target = binder() ?: return@withContext Result.Failure("未获取到 PowerHAL 服务")
 
         val data = Parcel.obtain()
-        val reply = Parcel.obtain()
         try {
             data.writeInterfaceToken(INTERFACE_TOKEN)
             data.writeInt(handler)
-            val ok = target.transact(TRANSACT_RELEASE, data, reply, 0)
+            val ok = target.transact(TRANSACT_RELEASE, data, null, IBinder.FLAG_ONEWAY)
             if (ok) Result.Success(0, "调频已释放") else Result.Failure("调频释放请求失败")
         } catch (t: Throwable) {
             Result.Failure("PowerHAL 调用异常: ${t.javaClass.simpleName}: ${t.message}")
         } finally {
             data.recycle()
-            reply.recycle()
         }
     }
 

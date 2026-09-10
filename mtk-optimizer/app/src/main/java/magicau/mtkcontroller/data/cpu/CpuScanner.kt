@@ -1,5 +1,7 @@
 package magicau.mtkcontroller.data.cpu
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.data.sysfs.Sysfs
 import magicau.mtkcontroller.domain.model.CpuCluster
 import java.io.File
@@ -24,7 +26,12 @@ class CpuScanner {
         private const val MIN_PLAUSIBLE_KHZ = 100_000L
     }
 
-    suspend fun scan(): List<CpuCluster> {
+    /**
+     * @param deep when true, also run the (shell round-trip) governor write
+     *   probe. The home dashboard's 1 Hz sampler passes false — it only needs
+     *   live frequencies and must stay cheap.
+     */
+    suspend fun scan(deep: Boolean = true): List<CpuCluster> {
         val policies = listPolicies()
         if (policies.isEmpty()) return emptyList()
 
@@ -42,8 +49,6 @@ class CpuScanner {
                 ?: available.firstOrNull() ?: 0L
             val maxFreq = read(dir, "cpuinfo_max_freq")?.toLongOrNull()
                 ?: available.lastOrNull() ?: 0L
-
-            val governorPerm = Sysfs.stat("$dir/scaling_governor")
 
             CpuCluster(
                 policy = policy,
@@ -63,9 +68,24 @@ class CpuScanner {
                     .orEmpty(),
                 currentGovernor = read(dir, "scaling_governor"),
                 driver = read(dir, "scaling_driver"),
-                governorWritable = governorPerm?.writable == true,
+                // The old mode-bit heuristic answered "writable" on this
+                // device while the write silently failed, so it now asks the
+                // kernel directly.
+                governorWritable = deep && Sysfs.probeWritable("$dir/scaling_governor"),
             )
         }
+    }
+
+    /**
+     * Just the live per-cluster frequencies, keyed by policy.
+     *
+     * One plain file read per cluster and no shell round-trips, which is what
+     * makes it usable from the dashboard's 1 Hz sampler.
+     */
+    suspend fun currentFreqs(): Map<String, Long> = withContext(Dispatchers.IO) {
+        listPolicies().associateWith { policy ->
+            Sysfs.read("$CPUFREQ_ROOT/$policy/scaling_cur_freq")?.toLongOrNull() ?: 0L
+        }.filterValues { it > 0L }
     }
 
     /** Sorted numerically so policy0 < policy4 < policy7. */

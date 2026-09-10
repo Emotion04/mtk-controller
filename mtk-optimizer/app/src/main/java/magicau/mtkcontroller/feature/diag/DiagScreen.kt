@@ -20,7 +20,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,7 +43,6 @@ fun DiagScreen(
     onRefresh: () -> Unit,
     onRequestPermission: () -> Unit,
     onVerify: () -> Unit,
-    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (state.loading) {
@@ -63,19 +61,11 @@ fun DiagScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (onBack != null) {
-                        TextButton(onClick = onBack) { Text("‹ 返回") }
-                    }
-                    Text("诊断信息", style = MaterialTheme.typography.headlineSmall)
-                }
-                Text(
-                    "真机首次运行后,把这里的结果截图发我,即可确认探测是否准确。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                "真机首次运行后,把这里的结果截图发我,即可确认探测是否准确。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         item {

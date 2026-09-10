@@ -59,7 +59,10 @@ class CapabilityProbe(
         val remoteBound = PrivilegeManager.isRemoteReady
         val remoteUid = if (remoteBound) PrivilegeManager.remoteUid() else null
 
-        val powerHal = privilege.mode.canElevate && PowerHal.isAvailable()
+        val powerHal = privilege.mode.canElevate && PowerHal.isAvailableNow()
+
+        // Diagnostics is where you go to see the truth, so bypass the cache.
+        gpuScanner.invalidate()
 
         val clusters = runCatching { cpuScanner.scan() }.getOrDefault(emptyList())
         val gpu = runCatching { gpuScanner.scan() }.getOrDefault(GpuInfo())

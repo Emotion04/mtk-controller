@@ -1,10 +1,14 @@
 package magicau.mtkcontroller.feature.cpu
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,19 +16,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RangeSlider
-import androidx.compose.material3.Slider
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,24 +39,31 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import magicau.mtkcontroller.domain.model.CpuControlStyle
-import kotlin.math.roundToInt
+import androidx.lifecycle.compose.LifecycleResumeEffect
 
 @Composable
 fun CpuScreen(
     state: CpuUiState,
-    onMinChange: (Int, Int) -> Unit,
-    onMaxChange: (Int, Int) -> Unit,
     onGovernorChange: (Int, String) -> Unit,
-    onLock: (Int, Int) -> Unit,
     onRange: (Int, Int, Int) -> Unit,
     onApply: () -> Unit,
     onRelease: () -> Unit,
     onSaveProfile: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onResume: () -> Unit = {},
 ) {
+    // Re-check PowerHAL whenever the screen comes back to the foreground: the
+    // user may have granted Shizuku while the CPU tab was in the background.
+    LifecycleResumeEffect(Unit) {
+        onResume()
+        onPauseOrDispose { }
+    }
+
     if (state.loading) {
         Column(modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
@@ -70,25 +81,35 @@ fun CpuScreen(
     }
 
     var showSaveDialog by remember { mutableStateOf(false) }
+    // Governor is deliberately collapsed: it is a secondary knob that needs
+    // root on most ROMs, so it should not dominate a screen whose job is
+    // frequency limits.
+    var governorExpanded by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp, end = 16.dp, top = 16.dp, bottom = 110.dp,
-        ),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 110.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Header(state) }
 
-        itemsIndexed(state.edits) { index, edit ->
+        item {
+            GovernorSection(
+                edits = state.edits,
+                expanded = governorExpanded,
+                enabled = !state.busy,
+                onToggle = { governorExpanded = !governorExpanded },
+                onGovernorChange = onGovernorChange,
+            )
+        }
+
+        itemsIndexed(
+            items = state.edits,
+            key = { _, edit -> edit.cluster.policy },
+        ) { index, edit ->
             ClusterCard(
                 edit = edit,
-                style = state.controlStyle,
                 enabled = !state.busy,
-                onMinChange = { onMinChange(index, it) },
-                onMaxChange = { onMaxChange(index, it) },
-                onGovernorChange = { onGovernorChange(index, it) },
-                onLock = { onLock(index, it) },
                 onRange = { lo, hi -> onRange(index, lo, hi) },
             )
         }
@@ -98,13 +119,13 @@ fun CpuScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onApply,
-                        enabled = !state.busy && state.powerHalAvailable,
+                        enabled = !state.busy && state.powerHal.available,
                         modifier = Modifier.weight(1f),
                     ) { Text("应用") }
 
                     OutlinedButton(
                         onClick = onRelease,
-                        enabled = !state.busy && state.powerHalAvailable,
+                        enabled = !state.busy && state.powerHal.available,
                         modifier = Modifier.weight(1f),
                     ) { Text("释放") }
                 }
@@ -115,16 +136,20 @@ fun CpuScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("保存为方案") }
 
-                if (!state.powerHalAvailable) {
+                if (!state.powerHal.available && state.powerHal.checked) {
                     Text(
-                        text = "PowerHAL 不可用:请先授权 Shizuku。非 MTK 设备无法调频。",
+                        text = state.powerHal.reason ?: "调频当前不可用",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
 
                 state.message?.let {
-                    Text(text = it, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -162,16 +187,110 @@ private fun Header(state: CpuUiState) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Collapsible governor picker covering every cluster.
+ *
+ * Collapsed by default: it is one row summarising the current governor, and it
+ * expands to a radio list. A dropdown per cluster inside an already-scrollable
+ * card was awkward to hit and made the screen much longer than it needed to be.
+ */
+@Composable
+private fun GovernorSection(
+    edits: List<ClusterEdit>,
+    expanded: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onGovernorChange: (Int, String) -> Unit,
+) {
+    val writable = edits.any { it.cluster.governorWritable }
+    val summary = edits.map { it.governor ?: "—" }.distinct().joinToString(" / ")
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled, onClick = onToggle)
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("CPU 调速器", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 10.dp)) {
+                    if (!writable) {
+                        Text(
+                            "当前无法写入调速器节点,选择后可能不会生效。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
+                        )
+                    }
+                    edits.forEachIndexed { index, edit ->
+                        Text(
+                            edit.cluster.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp, top = 6.dp, bottom = 2.dp),
+                        )
+                        val governors = edit.cluster.governors.ifEmpty {
+                            listOfNotNull(edit.cluster.currentGovernor)
+                        }
+                        if (governors.isEmpty()) {
+                            Text(
+                                "该设备未报告可用调速器",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 8.dp, bottom = 2.dp),
+                            )
+                        }
+                        governors.forEach { governor ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .selectable(
+                                        selected = edit.governor == governor,
+                                        role = Role.RadioButton,
+                                        enabled = enabled,
+                                        onClick = { onGovernorChange(index, governor) },
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                RadioButton(
+                                    selected = edit.governor == governor,
+                                    onClick = null,
+                                    enabled = enabled,
+                                )
+                                Text(governor, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ClusterCard(
     edit: ClusterEdit,
-    style: CpuControlStyle,
     enabled: Boolean,
-    onMinChange: (Int) -> Unit,
-    onMaxChange: (Int) -> Unit,
-    onGovernorChange: (String) -> Unit,
-    onLock: (Int) -> Unit,
     onRange: (Int, Int) -> Unit,
 ) {
     val freqs = edit.cluster.availableFreqs
@@ -205,100 +324,41 @@ private fun ClusterCard(
                 return@Column
             }
 
-            when (style) {
-                CpuControlStyle.RANGE_SLIDER -> RangeSlider(
-                    value = edit.minIndex.toFloat()..edit.maxIndex.toFloat(),
-                    onValueChange = { range ->
-                        onMinChange(range.start.toInt())
-                        onMaxChange(range.endInclusive.toInt())
-                    },
-                    valueRange = 0f..lastIndex.toFloat(),
-                    steps = (lastIndex - 1).coerceAtLeast(0),
-                    enabled = enabled,
-                )
-
-                CpuControlStyle.SINGLE_SLIDER -> Slider(
-                    value = edit.maxIndex.toFloat(),
-                    onValueChange = { onLock(it.roundToInt()) },
-                    valueRange = 0f..lastIndex.toFloat(),
-                    steps = (lastIndex - 1).coerceAtLeast(0),
-                    enabled = enabled,
-                )
-
-                CpuControlStyle.SEGMENT_BAR -> SegmentBar(
-                    count = freqs.size,
-                    minIndex = edit.minIndex,
-                    maxIndex = edit.maxIndex,
-                    enabled = enabled,
-                    onRange = onRange,
-                )
-            }
+            SegmentBar(
+                count = freqs.size,
+                minIndex = edit.minIndex,
+                maxIndex = edit.maxIndex,
+                enabled = enabled,
+                onRange = onRange,
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("下限 ${edit.minFreqKhz / 1000} MHz", style = MaterialTheme.typography.bodyMedium)
-                Text("上限 ${edit.maxFreqKhz / 1000} MHz", style = MaterialTheme.typography.bodyMedium)
+                LimitLabel("min", edit.minFreqKhz)
+                LimitLabel("max", edit.maxFreqKhz)
             }
-
-            GovernorPicker(
-                governors = edit.cluster.governors,
-                selected = edit.governor,
-                enabled = enabled && edit.cluster.governorWritable,
-                hint = if (edit.cluster.governors.isEmpty()) {
-                    "该设备未报告可用调速器"
-                } else if (!edit.cluster.governorWritable) {
-                    "调速器需要 root 才能修改"
-                } else {
-                    null
-                },
-                onSelect = onGovernorChange,
-            )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** "min 1234 MHz" — Latin labels, monospaced value so the row does not jitter. */
 @Composable
-private fun GovernorPicker(
-    governors: List<String>,
-    selected: String?,
-    enabled: Boolean,
-    hint: String?,
-    onSelect: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        ExposedDropdownMenuBox(
-            expanded = expanded,
-            onExpandedChange = { if (enabled) expanded = it },
-        ) {
-            OutlinedTextField(
-                value = selected ?: "—",
-                onValueChange = {},
-                readOnly = true,
-                enabled = enabled,
-                label = { Text("调速器") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(),
-            )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                governors.forEach { governor ->
-                    DropdownMenuItem(
-                        text = { Text(governor) },
-                        onClick = {
-                            onSelect(governor)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
-        hint?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+private fun LimitLabel(name: String, freqKhz: Long) {
+    Row(
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            name,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "${freqKhz / 1000} MHz",
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -342,11 +402,16 @@ internal fun EmptyState(title: String, body: String, modifier: Modifier = Modifi
 }
 
 /**
- * A progress-bar style range picker: one segment per available frequency.
+ * Segment bar: one segment per available frequency, tap or drag to pick.
  *
- * First tap sets the anchor, the second extends the range to it — the same
- * two-tap idiom used by range pickers elsewhere, which avoids tiny drag
- * targets when a cluster exposes twenty-odd steps.
+ * The single control covers all three intents:
+ *  - one tap      → lock the cluster to that frequency
+ *  - a second tap → widen to the range between the two taps
+ *  - a drag       → select the span the finger crossed
+ *
+ * The span is always normalised to low..high, so it does not matter which end
+ * the gesture started from — the earlier version could hand the high value to
+ * the "min" slot when the user tapped right-to-left.
  */
 @Composable
 private fun SegmentBar(
@@ -356,15 +421,77 @@ private fun SegmentBar(
     enabled: Boolean,
     onRange: (Int, Int) -> Unit,
 ) {
-    var anchor by remember { mutableStateOf<Int?>(null) }
+    var tapAnchor by remember { mutableStateOf<Int?>(null) }
+    var dragFrom by remember { mutableStateOf<Int?>(null) }
+    var dragTo by remember { mutableStateOf<Int?>(null) }
+    var widthPx by remember { mutableStateOf(0) }
+
+    fun indexAt(x: Float): Int {
+        if (widthPx <= 0 || count <= 0) return 0
+        // Each segment occupies an equal slice including its share of the gaps.
+        val slot = (x / widthPx * count).toInt()
+        return slot.coerceIn(0, count - 1)
+    }
+
+    /** Highlight during a drag follows the finger; otherwise the committed range. */
+    val shownFrom = dragFrom ?: minIndex
+    val shownTo = dragTo ?: maxIndex
 
     Row(
-        modifier = Modifier.fillMaxWidth().height(26.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(30.dp)
+            .onSizeChanged { widthPx = it.width }
+            .then(
+                if (!enabled) Modifier else Modifier
+                    .pointerInput(count, widthPx) {
+                        detectTapGestures { offset ->
+                            val i = indexAt(offset.x)
+                            val anchor = tapAnchor
+                            if (anchor == null) {
+                                // First tap locks immediately…
+                                onRange(i, i)
+                                tapAnchor = i
+                            } else {
+                                // …the second one opens it into a range.
+                                onRange(minOf(anchor, i), maxOf(anchor, i))
+                                tapAnchor = null
+                            }
+                        }
+                    }
+                    .pointerInput(count, widthPx) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { offset ->
+                                val i = indexAt(offset.x)
+                                dragFrom = i
+                                dragTo = i
+                                tapAnchor = null
+                            },
+                            onDragEnd = {
+                                val from = dragFrom
+                                val to = dragTo
+                                if (from != null && to != null) {
+                                    onRange(minOf(from, to), maxOf(from, to))
+                                }
+                                dragFrom = null
+                                dragTo = null
+                            },
+                            onDragCancel = {
+                                dragFrom = null
+                                dragTo = null
+                            },
+                            onHorizontalDrag = { change, _ ->
+                                change.consume()
+                                dragTo = indexAt(change.position.x)
+                            },
+                        )
+                    }
+            ),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         repeat(count) { i ->
-            val inRange = i in minIndex..maxIndex
-            val isAnchor = anchor == i
+            val inRange = i in minOf(shownFrom, shownTo)..maxOf(shownFrom, shownTo)
+            val isEdge = i == shownFrom || i == shownTo
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -372,22 +499,10 @@ private fun SegmentBar(
                     .clip(RoundedCornerShape(3.dp))
                     .background(
                         when {
-                            isAnchor -> MaterialTheme.colorScheme.tertiary
+                            isEdge && shownFrom != shownTo -> MaterialTheme.colorScheme.tertiary
                             inRange -> MaterialTheme.colorScheme.primary
                             else -> MaterialTheme.colorScheme.surfaceVariant
                         }
-                    )
-                    .then(
-                        if (enabled) Modifier.clickable {
-                            val start = anchor
-                            if (start == null) {
-                                onRange(i, i)
-                                anchor = i
-                            } else {
-                                onRange(minOf(start, i), maxOf(start, i))
-                                anchor = null
-                            }
-                        } else Modifier
                     ),
             )
         }

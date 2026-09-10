@@ -1,5 +1,6 @@
 package magicau.mtkcontroller.data.gpu
 
+import android.os.SystemClock
 import magicau.mtkcontroller.data.sysfs.Sysfs
 import magicau.mtkcontroller.domain.model.GpuChannel
 import magicau.mtkcontroller.domain.model.GpuInfo
@@ -10,6 +11,10 @@ import magicau.mtkcontroller.domain.model.GpuOpp
  *
  * MediaTek has shipped at least three over time, so we try them in order of
  * preference and report what we actually found rather than assuming.
+ *
+ * Results are cached briefly: channel detection costs several shell round-trips
+ * and the interface a device exposes never changes while it is running, so the
+ * dashboard's sampler should not pay for it every second.
  */
 class GpuScanner {
 
@@ -20,9 +25,32 @@ class GpuScanner {
         const val GPUFREQ_V1_OPP_FREQ = "/proc/gpufreq/gpufreq_opp_freq"
         const val DEVFREQ_ROOT = "/sys/class/devfreq/mtk-mali"
         const val GED_UTILIZATION = "/sys/kernel/ged/hal/gpu_utilization"
+
+        private const val CACHE_TTL_MS = 10_000L
+    }
+
+    @Volatile
+    private var cached: GpuInfo? = null
+
+    @Volatile
+    private var cachedAtMs = 0L
+
+    /** Force the next [scan] to re-probe, e.g. from diagnostics. */
+    fun invalidate() {
+        cached = null
+        cachedAtMs = 0L
     }
 
     suspend fun scan(): GpuInfo {
+        val hit = cached
+        if (hit != null && SystemClock.elapsedRealtime() - cachedAtMs < CACHE_TTL_MS) return hit
+        return scanUncached().also {
+            cached = it
+            cachedAtMs = SystemClock.elapsedRealtime()
+        }
+    }
+
+    private suspend fun scanUncached(): GpuInfo {
         // GPUFreq v2 — current-generation Dimensity.
         if (Sysfs.exists(GPUFREQ_V2_FIX_OPP)) {
             val opps = parseOppTable(Sysfs.read(GPUFREQ_V2_OPP_TABLE))

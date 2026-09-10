@@ -23,7 +23,10 @@ data class CpuCluster(
     val currentGovernor: String? = null,
     /** e.g. "mtk-cpufreq" on a real device, "goldfish" on the emulator. */
     val driver: String? = null,
-    /** Whether we can write the governor node (needs root). */
+    /**
+     * Whether a governor write actually lands, established by writing the
+     * current value back rather than by reading permission bits.
+     */
     val governorWritable: Boolean = false,
 ) {
     /** e.g. "policy0 · CPU 0-3". */

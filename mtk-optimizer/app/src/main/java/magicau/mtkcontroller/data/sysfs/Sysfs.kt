@@ -1,29 +1,9 @@
 package magicau.mtkcontroller.data.sysfs
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.data.privilege.PrivilegeManager
 import java.io.File
-
-/** Ownership/mode of a node, used to decide whether we may write to it. */
-data class NodePerm(
-    val mode: String,
-    val owner: String,
-    val group: String,
-) {
-    /** True when the mode string grants write to owner or group or other. */
-    val writable: Boolean
-        get() {
-            val bits = mode.trim().removePrefix("0")
-            // Normalise "644" / "0644" / "rw-r--r--" style input to a 3-4 digit octal.
-            return when {
-                bits.length >= 3 && bits.all { it in '0'..'7' } -> {
-                    val g = bits.takeLast(3)
-                    g[0] in '2'..'7' || g[1] in '2'..'7' || g[2] in '2'..'7'
-                }
-
-                else -> false
-            }
-        }
-}
 
 /**
  * Small helper over the kernel's text-file interfaces.
@@ -36,10 +16,17 @@ object Sysfs {
 
     private const val TAG_EXIT = "[exit]"
 
-    /** Direct read from the app process. Returns null when unreadable. */
-    fun read(path: String): String? = runCatching {
-        File(path).takeIf { it.canRead() }?.readText()?.trim()
-    }.getOrNull()
+    /**
+     * Direct read from the app process. Returns null when unreadable.
+     *
+     * Suspends onto IO because these are real kernel file reads: on the main
+     * thread a handful of them per frame is enough to drop frames.
+     */
+    suspend fun read(path: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            File(path).takeIf { it.canRead() }?.readText()?.trim()
+        }.getOrNull()
+    }
 
     /** Read through the elevated shell (for nodes our own uid cannot open). */
     suspend fun readElevated(path: String): String? {
@@ -66,15 +53,23 @@ object Sysfs {
         return out.substringBefore(TAG_EXIT).lines().map { it.trim() }.filter { it.isNotEmpty() }
     }
 
-    /** stat(1) a node to learn who owns it and whether write bits are set. */
-    suspend fun stat(path: String): NodePerm? {
-        val out = PrivilegeManager.exec("stat -c '%a %U %G' '${escape(path)}' 2>/dev/null")
-            ?: return null
-        val line = out.substringBefore(TAG_EXIT).trim().lines().firstOrNull()?.trim().orEmpty()
-        if (line.isEmpty()) return null
-        val parts = line.split(Regex("\\s+"))
-        if (parts.size < 3) return null
-        return NodePerm(mode = parts[0], owner = parts[1], group = parts[2])
+    /**
+     * Decide whether we can really write [path] by writing its own current
+     * value back to it.
+     *
+     * Reading the mode bits is not a reliable proxy: a node can be mode 664
+     * root:system and still be unwritable for us once SELinux and the actual
+     * group membership are accounted for. Only an attempted write tells the
+     * truth. Writing the value the file already holds is a no-op for every
+     * cpufreq node we probe — `store_scaling_governor` returns early when the
+     * requested governor is the active one — so this is safe to call.
+     *
+     * Returns false when the node is unreadable or the write is rejected.
+     */
+    suspend fun probeWritable(path: String): Boolean {
+        val current = readElevated(path)?.trim()?.lineSequence()?.firstOrNull()?.trim()
+        if (current.isNullOrEmpty()) return false
+        return write(path, current)
     }
 
     private fun escape(raw: String) = raw.replace("'", "'\\''")

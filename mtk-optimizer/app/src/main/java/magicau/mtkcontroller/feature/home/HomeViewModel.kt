@@ -2,6 +2,9 @@ package magicau.mtkcontroller.feature.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -9,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.data.privilege.PrivilegeManager
 import magicau.mtkcontroller.data.privilege.PrivilegeState
 import magicau.mtkcontroller.di.AppContainer
@@ -17,6 +21,7 @@ import magicau.mtkcontroller.domain.model.GpuInfo
 import magicau.mtkcontroller.domain.model.HomeCard
 import magicau.mtkcontroller.domain.model.HomeCardType
 import magicau.mtkcontroller.domain.model.Profile
+import magicau.mtkcontroller.feature.cpu.CpuReapplyService
 import magicau.mtkcontroller.feature.thermal.ThermalBrightnessService
 
 /** One cluster's rolling frequency history, used by the chart. */
@@ -81,7 +86,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(privilege = privilege)
             }
         }
-        viewModelScope.launch { sampleLoop() }
         viewModelScope.launch {
             container.tweakRepository.touchEnabled.collect { enabled ->
                 _state.value = _state.value.copy(tweaks = _state.value.tweaks.copy(touchEnabled = enabled))
@@ -155,37 +159,79 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun sampleLoop() {
-        while (viewModelScope.isActive) {
-            val clusters = container.cpuScanner.scan()
-            clusters.forEach { cluster ->
-                val freq = readCurrentFreq(cluster) ?: return@forEach
-                val queue = history.getOrPut(cluster.policy) { ArrayDeque() }
-                queue.addLast(freq)
-                while (queue.size > HISTORY_SIZE) queue.removeFirst()
-            }
-            val series = clusters.map { cluster ->
-                ClusterSeries(
-                    policy = cluster.policy,
-                    label = cluster.label,
-                    maxKhz = cluster.maxFreqKhz.coerceAtLeast(1L),
-                    samples = history[cluster.policy]?.toList().orEmpty(),
-                )
-            }
-            _state.value = _state.value.copy(
-                loading = false,
-                clusters = clusters,
-                series = series,
-                gpu = runCatching { container.gpuScanner.scan() }.getOrDefault(GpuInfo()),
-            )
-            delay(SAMPLE_INTERVAL_MS)
+    private var sampleJob: Job? = null
+
+    /**
+     * Start or stop the 1 Hz sampler.
+     *
+     * The dashboard's ViewModel outlives the screen — navigating to another tab
+     * keeps the `home` back-stack entry (and therefore this ViewModel) alive —
+     * so without this the chart would keep reading sysfs forever in the
+     * background for a screen nobody is looking at.
+     */
+    fun setSamplingActive(active: Boolean) {
+        if (active) {
+            if (sampleJob?.isActive == true) return
+            // The gap while paused is not a real sample interval; start the
+            // chart cleanly rather than drawing a line across it.
+            history.clear()
+            sampleJob = viewModelScope.launch { sampleLoop() }
+        } else {
+            sampleJob?.cancel()
+            sampleJob = null
         }
     }
 
-    private suspend fun readCurrentFreq(cluster: CpuCluster): Long? =
-        magicau.mtkcontroller.data.sysfs.Sysfs
-            .read("${magicau.mtkcontroller.data.cpu.CpuScanner.CPUFREQ_ROOT}/${cluster.policy}/scaling_cur_freq")
-            ?.toLongOrNull()
+    /**
+     * Ticks once a second to refresh the dashboard's live frequencies.
+     *
+     * This used to call the full [CpuScanner.scan] — a governor write probe and
+     * a stat() shell round-trip per cluster — plus an uncached GPU probe, all
+     * on the main thread, every second. That was the app's worst source of
+     * jank: a steady 1 Hz pulse of blocking IPC that stalled whatever frame was
+     * being drawn, so scrolling and tab switches stuttered. It now reads only
+     * the live frequency nodes, off the main thread, and reuses the cluster
+     * metadata it already has.
+     */
+    private suspend fun sampleLoop() {
+        while (currentCoroutineContext().isActive) {
+            val clusters = _state.value.clusters.ifEmpty {
+                runCatching { withContext(Dispatchers.IO) { container.cpuScanner.scan(deep = false) } }
+                    .getOrDefault(emptyList())
+            }
+
+            if (clusters.isNotEmpty()) {
+                val freqs = runCatching { container.cpuScanner.currentFreqs() }
+                    .getOrDefault(emptyMap())
+
+                freqs.forEach { (policy, freq) ->
+                    val queue = history.getOrPut(policy) { ArrayDeque() }
+                    queue.addLast(freq)
+                    while (queue.size > HISTORY_SIZE) queue.removeFirst()
+                }
+
+                val series = clusters.map { cluster ->
+                    ClusterSeries(
+                        policy = cluster.policy,
+                        label = cluster.label,
+                        maxKhz = cluster.maxFreqKhz.coerceAtLeast(1L),
+                        samples = history[cluster.policy]?.toList().orEmpty(),
+                    )
+                }
+                val live = clusters.map { cluster ->
+                    freqs[cluster.policy]?.let { cluster.copy(currentFreqKhz = it) } ?: cluster
+                }
+
+                _state.value = _state.value.copy(
+                    loading = false,
+                    clusters = live,
+                    series = series,
+                    gpu = runCatching { container.gpuScanner.scan() }.getOrDefault(GpuInfo()),
+                )
+            }
+            delay(SAMPLE_INTERVAL_MS)
+        }
+    }
 
     fun applyProfile(profileId: String) {
         viewModelScope.launch {
@@ -196,9 +242,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 return@launch
             }
             val clusters = _state.value.clusters.ifEmpty { container.cpuScanner.scan() }
-            val outcome = container.cpuTuner.apply(clusters, profile.clusters)
-            outcome.handler?.let { container.profileRepository.setCpuHandler(it) }
-            if (outcome.success) container.profileRepository.setActiveProfile(profile.id)
+            val outcome = container.cpuControl.apply(clusters, profile.clusters)
+            if (outcome.success) {
+                container.profileRepository.setActiveProfile(profile.id)
+                container.syncCpuReapply()
+            }
             _state.value = _state.value.copy(busy = false, message = outcome.message)
         }
     }
@@ -206,11 +254,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     fun release() {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
-            val outcome = container.cpuTuner.release(container.profileRepository.cpuHandler())
-            if (outcome.success) {
-                container.profileRepository.setCpuHandler(0)
-                container.profileRepository.setActiveProfile(null)
-            }
+            val outcome = container.cpuControl.release(_state.value.clusters)
+            if (outcome.success) container.profileRepository.setActiveProfile(null)
+            // Polling would just re-acquire what we released.
+            CpuReapplyService.stop(container.context)
             _state.value = _state.value.copy(busy = false, message = outcome.message)
         }
     }

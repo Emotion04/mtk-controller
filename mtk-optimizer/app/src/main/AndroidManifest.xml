@@ -35,6 +35,15 @@
                 android:value="Restore screen brightness after thermal throttling" />
         </service>
 
+        <service
+            android:name=".feature.cpu.CpuReapplyService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Re-apply CPU frequency limits that vendor power services overwrite" />
+        </service>
+
         <!--
           Shizuku provider. Required for the Shizuku binder to reach this app.
           multiprocess must be false and exported must be true, or ShizukuProvider
