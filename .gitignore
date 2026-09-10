@@ -1,0 +1,38 @@
+# Build and tooling artifacts — large / regenerateable binaries
+*.apk
+*.bin
+*.dex
+*.idsig
+*.so
+*.jar
+*.zip
+*.sig
+maps.txt
+sr_names.txt
+
+# Extracted / generated output
+decomp/
+unpacked/
+
+# Local tooling (download separately)
+tools/
+
+# Android build artifacts (mtk-optimizer sub-project handles its own)
+*.iml
+.gradle
+.kotlin
+build/
+captures/
+local.properties
+
+# IDE / OS junk
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# Claude Code
+.claude/
