@@ -59,8 +59,17 @@ Do this before evaluating any change to frequency behaviour, otherwise the measu
 against a polluted device.
 
 The current code prevents new ones — see [architecture.md](architecture.md#the-one-rule-that-matters-cpucontrol)
-— and reports `仍与初始值不同,可能有旧的调频请求残留` when a release does not return the kernel
-to its recorded baseline.
+— and says so when a release does not return the kernel to its hardware range.
+
+**This is the leading explanation for three reported symptoms** that look unrelated:
+a cluster pinned at a value nobody set, control degrading after several adjustments, and
+"the floor works but the ceiling is ignored". The merge rule above produces all three from a
+single stale request. Read `实验室 → 只读面板 → 谁在限制`, which compares the silicon's range
+(`cpuinfo_*`) against the live `scaling_*` range and shows the gap.
+
+A caveat worth keeping: a gap is not proof of a stale request — the platform's own thermal and
+power-saving logic clamps too. The same panel shows power-save mode, thermal status and
+battery, so the two causes can be told apart.
 
 ## Immediate next steps
 
@@ -70,19 +79,22 @@ to its recorded baseline.
 2. **Transaction code detection** — the app hardcodes 22/23/24, which is correct on the test
    device and not portable. Implements the read-only scheme in
    [architecture.md](architecture.md#transaction-code-detection).
-3. **Fill the Lab** — a Settings section for probed, verified-on-this-device features:
-   per-cluster core-count limits (`0x00800000` / `0x00804000`), one-tap turbo
-   (`0x00414000 = 1`), GPU OPP-count via `querySysInfo`, and the accelerator/DRAM/CCI
-   families listed in [protocol.md](protocol.md#5-other-resource-families).
-   **Rule: probe first, and hide anything the device does not accept.**
-4. **First tests** for `CpuControl` — see
+3. **Run the canary lab** (设置 → 实验室). 17 features, each reporting whether the device
+   actually moved. Whatever comes back 生效 can be promoted; see the graduation rule in
+   `LabController`.
+4. **Move the PowerHAL calls into the app's own UserService.** Today they are forwarded
+   through Shizuku's process, so MTK sees *Shizuku* as the client — which means stranded
+   requests can only be cleared by restarting Shizuku. Issuing the transaction from inside
+   `RuntimeUserService` would make the app the client, and then restarting *our* service is a
+   one-tap clean-up. This turns "reboot to recover" into a button.
+5. **First tests** for `CpuControl` — see
    [architecture.md](architecture.md#testing). `PowerHal` needs to become an interface.
 
 ## Deliberately not done
 
 - **`setPriorityByUid` / `flushPriorityRules`.** They look like a system-wide rule table with
   unknown blast radius and possible persistence. Not shipping until the semantics are
-  established. See [pitfalls.md](pitfalls.md#12).
+  established. See [pitfalls.md](pitfalls.md#13).
 - **Hard limits.** Only the soft pair is written; hard limits are left to the platform's
   thermal policy.
 - **CCI as a naive slider.** Raising the interconnect clock only helps when cross-cluster
@@ -93,10 +105,18 @@ to its recorded baseline.
 
 ## Repository hygiene
 
-`.gitignore` excludes the reverse-engineering working set (`*.apk`, `*.dex`, `*.jar`,
-`cfr_out/`, `apktool_out2/`, `tools/`, `*.bin`). **Keep it that way** — those are derived from
-a third party's binary and must not be published. `git ls-files` should only ever show source,
-docs and this project's own assets.
+All third-party material lives in **`reference/`** — the reference app's APK, the decompiler
+output, memory dumps, and the vendor files fetched while researching the protocol. That folder
+is git-ignored except for its own `README.md`, which explains what is in it and where it came
+from.
+
+**Keep it that way.** Those files are a third party's, or derived from a third party's binary,
+and this repository is public. What gets published is the *fact* — `docs/protocol.md` records
+the protocol with its sources named, and that part is ours.
+
+`git status` should never show anything under `reference/` except `README.md`.
+
+`mtk-optimizer/` is self-contained: nothing there depends on `reference/`.
 
 ## Where to look
 

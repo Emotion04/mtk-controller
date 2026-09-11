@@ -1,21 +1,20 @@
-# Reverse engineering artifacts — large / regenerateable binaries
+# Build outputs
 *.apk
-*.bin
-*.dex
 *.idsig
-*.so
+
+# Keep gradle-wrapper.jar: `./gradlew` cannot run on a fresh clone without it.
+# Other jars are third-party tooling and stay out.
 *.jar
-*.zip
-*.sig
-maps.txt
-sr_names.txt
+!mtk-optimizer/gradle/wrapper/gradle-wrapper.jar
 
-# Extracted / generated output
-cfr_out/
-apktool_out2/
-
-# Third-party tools (download separately)
-tools/
+# ---------------------------------------------------------------------------
+# Reference material — a third party's files, kept local only.
+#
+# Everything under reference/ is either someone else's file or derived from
+# someone else's binary. Only the README is tracked: it explains the folder and
+# the rule. See docs/handoff.md.
+/reference/*
+!/reference/README.md
 
 # Android build artifacts (mtk-optimizer sub-project handles its own)
 *.iml
@@ -37,21 +36,8 @@ Thumbs.db
 # Claude Code
 .claude/
 
-# Research scratch — working files fetched or dumped while investigating a device.
-#
-# Never publish these. Several are third-party vendor files redistributed
-# verbatim (MediaTek kernel headers, powerhint/scentbl XMLs, command tables);
-# others are dumps derived from a third party's binary. The *facts* learned from
-# them live in docs/protocol.md, with sources named — that is the part worth
-# keeping, and it is ours to publish.
-#
-# Anchored with a leading slash on purpose: a bare `src/` also matches
-# `mtk-optimizer/app/src/`, which silently keeps the app's own new source files
-# out of the repository.
-/_*
-/tmp/
-/g*.json
-/gh*.json
-/hdrs/
-/src/
-/s_*.xml
+# NOTE: every rule above that names a directory is anchored with a leading
+# slash for a reason. A bare `src/` also matches `mtk-optimizer/app/src/`, which
+# silently keeps the app's own new source files out of the repository while the
+# already-tracked ones keep working — so the mistake is invisible until someone
+# clones fresh.

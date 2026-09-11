@@ -125,7 +125,21 @@ A ViewModel scoped to a navigation back-stack entry stays alive when the user na
 A 1 Hz sampler started in `init` kept reading sysfs forever, for a screen nobody was looking
 at. Gate it on the screen's lifecycle (`LifecycleResumeEffect`), not on construction.
 
-## 12. Do not ship a control whose semantics are unverified
+## 12. An unanchored ignore rule hides the files you just wrote
+
+A `.gitignore` entry of `src/` was added to exclude a scratch directory at the project root.
+It also matched `mtk-optimizer/app/src/` — so while every already-tracked file kept working,
+**new** files under the app's source tree were silently excluded. The mistake is invisible
+until someone clones fresh.
+
+**Rule.** Anchor every directory rule in `.gitignore` with a leading slash (`/src/`). A daily
+`git status` on a tree you have been editing is the only thing that catches this.
+
+Related, found the same way: `*.jar` had been excluding
+`gradle/wrapper/gradle-wrapper.jar`, so a fresh clone could not run `./gradlew` at all. Negate
+that one back in (`!path/to/gradle-wrapper.jar`) — it is part of the source, not an artifact.
+
+## 13. Do not ship a control whose semantics are unverified
 
 `setPriorityByUid` / `flushPriorityRules` look like a **rule table** — system-wide, possibly
 persistent, possibly affecting scheduling and network for other apps. The method names are

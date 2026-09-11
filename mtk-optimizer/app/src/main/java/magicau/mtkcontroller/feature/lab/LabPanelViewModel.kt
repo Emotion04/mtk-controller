@@ -42,7 +42,7 @@ class LabPanelViewModel(private val container: AppContainer) : ViewModel() {
             val clusters: List<CpuCluster> = withContext(Dispatchers.IO) {
                 runCatching { container.cpuScanner.scan(deep = false) }.getOrDefault(emptyList())
             }
-            val sections = LabProbe.readAll(clusters)
+            val sections = LabProbe.readAll(container.context, clusters)
             val readings = sections.flatMap { it.readings }
             _state.value = LabPanelUiState(
                 loading = false,
