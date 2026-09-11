@@ -4,6 +4,12 @@ Written for whoever picks this up next — human or agent. **Read this whole fil
 before changing anything in `mtk-optimizer/app/src/main/java/.../data/cpu/` or
 `data/powerhal/`.**
 
+**Read [device-vivo-v2430a.md](device-vivo-v2430a.md) alongside this.** The app
+cannot read the frequency limits back on the development device, so its own
+read-backs are blind there and the only usable measurements come from outside —
+that file records what is and is not observable, and what the device has actually
+been seen to do.
+
 ## How to read this document
 
 Three parts, and they are not equally trustworthy:
@@ -28,7 +34,7 @@ through [Shizuku](https://shizuku.rikka.app/). It talks to MediaTek's PowerHAL
 manager directly.
 
 - Package `magicau.mtkcontroller`, label **MTK God**
-- `versionCode 2` / `versionName 0.2.0`
+- `versionCode 6` / `versionName 0.3.3`
 - `minSdk 33`, `targetSdk 37`, Kotlin + Compose + Material 3
 - Build: `cd mtk-optimizer && ./gradlew assembleDebug`
 - **Bump `versionCode` on every hand-off build.** It was left at `1` for many
@@ -99,9 +105,19 @@ Invariants, enforced structurally rather than remembered:
 - PowerHAL is reachable through Shizuku and returns valid handles
 - The command array format is correct: values do reach the kernel — frequencies
   have been observed changing after an apply
-- `scaling_min_freq` follows what the app sends — **in some runs**
-- The read-back of `scaling_min_freq` / `scaling_max_freq` reflects service state
-- `/proc/ppm/policy/hard_userlimit_cpu_freq` **does not exist** on this device
+- `/proc/ppm/policy/hard_userlimit_cpu_freq` **does not exist** on this device, so
+  hard-limit writes are a no-op here
+
+> **Correction, and it invalidates a lot.** An earlier version of this document
+> listed "the read-back of `scaling_min_freq`/`scaling_max_freq` reflects service
+> state" as verified. A full diagnostic report taken on 2026-09-12 shows those two
+> nodes are **not readable at all** on this device, for any cluster, by either the
+> direct read or the elevated one — while `scaling_cur_freq` reads fine.
+> See [device-vivo-v2430a.md §2](device-vivo-v2430a.md#2-what-the-kernel-exposes--and-what-it-does-not).
+>
+> Every conclusion this project drew from a read-back — including several rounds
+> of "the ceiling did not take effect" — rests on a measurement that does not
+> exist. **Treat those as unverified.**
 
 ## 1.6 Never verified — do not describe these as working
 
@@ -151,7 +167,10 @@ CPU screen):
 2. cycle power-save mode so the vendor power service re-evaluates and re-pushes
    its limits — `settings` is shell-writable, so this can work over **adb**
 
-**Not yet tested.** If both fail, the honest answer to the user is "reboot".
+**Not yet tested, and on this device route 1 cannot work at all**: it writes
+`scaling_max_freq`/`scaling_min_freq`, which uid 2000 cannot even *read* here
+(§P10). Route 2 — cycling power-save through `settings`, which shell can write —
+is the only one with a chance. If both fail, the honest answer is "reboot".
 
 ## P3 — The ceiling does not appear to take effect 🟠
 
@@ -213,11 +232,42 @@ cannot clean up after itself.
 Moving the `transact` into `RuntimeUserService` (the app's own elevated process)
 would make the app the client. **Not started.**
 
-## P10 — `policy0`'s `scaling_max_freq` reads as absent 🟡
+## P10 — The app cannot read the frequency limits on this device 🔴
 
-The read-only panel reports the node as not existing for `policy0`, while the same
-node reads fine for `policy4` and `policy7`, and `policy0/scaling_cur_freq` reads
-fine. **Unexplained** — it may be a read failure rather than a missing node.
+`scaling_min_freq` / `scaling_max_freq` / `cpuinfo_min_freq` / `cpuinfo_max_freq`
+return nothing for **every** cluster — direct read and elevated `cat` both fail,
+so it is not something the app can work around as uid 2000.
+`scaling_cur_freq` reads fine.
+
+**This is the reason several earlier conclusions were wrong**: the app has been
+applying limits and then reporting "no effect" based on a read that never
+succeeded. `CpuControl`'s three-sample settle logging, the release verification,
+and the read-only panel's 「谁在限制」 section are all inert on this device.
+
+**Do not fix this by guessing a different node.** Establish first whether adb from
+a PC (same uid 2000, different SELinux domain) can read them; if it cannot either,
+accept that verification must come from an external monitor.
+
+Details and the full node table: [device-vivo-v2430a.md §2](device-vivo-v2430a.md#2-what-the-kernel-exposes--and-what-it-does-not).
+
+## P10b — Something caps the ceiling at ~1.8 / 2.1 / 2.1 GHz 🟠
+
+Observed by the user with an **external CPU monitor** (the app cannot see it):
+
+- the three clusters settle at roughly 1.8 / 2.1 / 2.1 GHz
+- a range whose ceiling is below those values **works**
+- a single value acts as a **floor, not a lock** — it can still rise above
+- a range whose floor is above those values **has no effect**
+
+Read together that is one fact seen three ways: an effective ceiling is held near
+those values and the app's ceiling writes cannot get above it.
+
+**Not established:** where that cap comes from. The vendor's thermal/DCVS logic is
+the obvious candidate but has not been shown; nothing in the readable node set
+confirms it.
+
+**Why the numbers matter:** they are *not* the cluster maximums (2000 / 2850 /
+3400). Whatever holds them is dynamic.
 
 ## P11 — No automated tests 🟡
 
@@ -296,7 +346,13 @@ read-back is still the app's only evidence, so the ambiguity matters.
 three. If they differ, this was real; if all three agree, it was not.
 
 ### S3 — The service clamps values at its own idea of the cluster maximum
-*Confidence: low.*
+*Confidence: raised to medium by the 2026-09-12 report.*
+
+The user's observation is exactly this shape: a ceiling that works below some
+value and does nothing above it, and a floor that cannot be raised past it. The
+cap sits far below the silicon maximum (1.8/2.1/2.1 against 2000/2850/3400 MHz),
+so it is not the hardware limit — which points at a software clamp rather than a
+write failure.
 
 `perfservice` was reported to clamp with
 `param_1 >= ptClusterTbl[i].freqMax ? freqMax : param_1`, and to replace an
@@ -359,9 +415,11 @@ In order. Do not skip 1.
    rounds.
 2. **Confirm which build is installed** — the log screen header shows the version.
    If it is not the build you just made, stop; the install did not take.
-3. **Read the read-only panel, section 「谁在限制」.** It is the *first* section;
-   the user has twice looked for it below the fold. It shows the hardware range
-   against the live range, plus power-save, thermal status and battery.
+3. **Read [device-vivo-v2430a.md](device-vivo-v2430a.md) before interpreting any
+   log.** On this device the app's read-backs are blind, so a log saying "no
+   effect" carries no information. Note also that the read-only panel's
+   「谁在限制」 section is empty here for the same reason — it is the *first*
+   section of that screen, which the user has twice looked for below the fold.
 4. **Run S3's experiment**: small values on every cluster, then read back.
 5. Only then start on P1 with real evidence.
 
@@ -383,6 +441,8 @@ In order. Do not skip 1.
 | the protocol, with sources | [protocol.md](protocol.md) |
 | why something is the way it is | [pitfalls.md](pitfalls.md) |
 | layers, invariants, testing gaps | [architecture.md](architecture.md) |
+| what this device can and cannot observe | [device-vivo-v2430a.md](device-vivo-v2430a.md) |
+| raw diagnostic report, 2026-09-12 | [reports/2026-09-12-vivo-v2430a-0.3.3.txt](reports/2026-09-12-vivo-v2430a-0.3.3.txt) |
 | CPU control | `data/cpu/CpuControl.kt` |
 | handle lifecycle | `data/powerhal/PerfLockController.kt` |
 | wire format | `data/powerhal/PowerHal.kt` |

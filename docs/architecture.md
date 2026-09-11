@@ -92,6 +92,11 @@ as a collapsed range; it may simply have been a half-applied batch. Three sample
 make the difference visible instead of arguable. See
 [pitfalls.md](pitfalls.md#2).
 
+> **On the development device this whole mechanism is inert.** uid 2000 cannot
+> read `scaling_min_freq`/`scaling_max_freq` there at all, so all three samples
+> come back empty. Verification on that device has to come from an external CPU
+> monitor — see [device-vivo-v2430a.md](device-vivo-v2430a.md#2-what-the-kernel-exposes--and-what-it-does-not).
+
 ## Transaction code detection
 
 Transaction numbers are AIDL declaration order, so they are a property of the ROM's framework

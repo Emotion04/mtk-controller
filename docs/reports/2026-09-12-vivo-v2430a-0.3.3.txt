@@ -1,0 +1,203 @@
+# MTK God 诊断报告
+# 生成时间: 2026-09-12 04:26:11
+# 把整份内容发回即可用于适配本机型
+
+============================================================
+== 设备
+============================================================
+manufacturer : vivo
+model        : V2430A
+device       : PD2430
+hardware     : mt6989
+soc_manu     : Mediatek
+soc_model    : MT6989
+board        : k6989v1_64
+android      : 16 (API 36)
+build_id     : PD2430D_A_16.1.12.0.W10
+
+============================================================
+== 应用
+============================================================
+version      : 0.3.3 (build 6)
+interface    : com.mediatek.powerhalmgr.IPowerHalMgr
+service      : power_hal_mgr_service
+
+============================================================
+== 接口标识
+============================================================
+expected     : com.mediatek.powerhalmgr.IPowerHalMgr
+reported     : (取不到)
+
+============================================================
+== 提权
+============================================================
+mode         : ADB
+uid          : 2000
+permission   : true
+binder_alive : true
+shizuku_ver  : 13
+user_service : bound=true uid=2000
+powerhal     : true
+
+============================================================
+== CPU 簇(命令索引由此顺序推导)
+============================================================
+index=0 policy=policy0 cpus=0,1,2,3 driver=mtk-cpufreq-hw governor=null governorWritable=false freqs=18档 range=300-2000MHz
+index=1 policy=policy4 cpus=4,5,6 driver=mtk-cpufreq-hw governor=null governorWritable=false freqs=25档 range=550-2850MHz
+index=2 policy=policy7 cpus=7 driver=mtk-cpufreq-hw governor=null governorWritable=false freqs=30档 range=600-3400MHz
+
+============================================================
+== GPU
+============================================================
+channel      : NONE
+freqs        : 0档
+governor     : null
+
+============================================================
+== 探测项
+============================================================
+[OK ] 提权与权限 / Shizuku 服务
+        已连接 · 版本 13
+[OK ] 提权与权限 / 授权状态
+        已授权 · adb/shell (uid 2000)
+[OK ] 提权与权限 / 提权进程 (UserService)
+        已绑定 · 实际 uid 2000
+[OK ] CPU 调频 / PowerHAL (power_hal_mgr_service)
+        可调用 —— 频率上下限可用
+[NG ] CPU 调频 / 接口标识
+        未取到 —— 非 MTK 设备或权限不足
+[OK ] CPU 调频 / CPU 簇
+        policy0  CPU 0-3  18 档  [mtk-cpufreq-hw]
+        policy4  CPU 4-6  25 档  [mtk-cpufreq-hw]
+        policy7  CPU 7-7  30 档  [mtk-cpufreq-hw]
+[NG ] CPU 调频 / 调速器可写性
+        不可写 —— sysfs 节点通常 root 私有
+[NG ] GPU 调频 / GPU 接口
+        未检测到 GPU 调频接口
+[OK ] 运行环境 / 设备
+        vivo V2430A · Android 16 (API 36)
+[OK ] 运行环境 / SoC
+        Mediatek · MT6989 · mt6989
+
+============================================================
+== 谁在限制
+============================================================
+-- 谁在限制
+policy0 上限被压低 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq  vs  scaling_max_freq
+policy0 下限被抬高 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_min_freq  vs  scaling_min_freq
+policy4 上限被压低 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy4/cpuinfo_max_freq  vs  scaling_max_freq
+policy4 下限被抬高 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy4/cpuinfo_min_freq  vs  scaling_min_freq
+policy7 上限被压低 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy7/cpuinfo_max_freq  vs  scaling_max_freq
+policy7 下限被抬高 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy7/cpuinfo_min_freq  vs  scaling_min_freq
+省电模式 = 关
+    node: PowerManager.isPowerSaveMode
+热状态 = NONE · 正常
+    node: PowerManager.currentThermalStatus
+电池 = 12% · 未充电
+    node: BatteryManager
+PPM 软上限 = (不存在)
+    node: /proc/ppm/policy/userlimit_cpu_freq
+-- 当前生效的限制
+policy0 下限 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq
+policy0 上限 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq
+policy0 当前 = 1600 MHz
+    node: /sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq
+policy4 下限 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq
+policy4 上限 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq
+policy4 当前 = 2100 MHz
+    node: /sys/devices/system/cpu/cpufreq/policy4/scaling_cur_freq
+policy7 下限 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy7/scaling_min_freq
+policy7 上限 = (不存在)
+    node: /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq
+policy7 当前 = 2100 MHz
+    node: /sys/devices/system/cpu/cpufreq/policy7/scaling_cur_freq
+硬限制 (全局) = (不存在)
+    node: /proc/ppm/policy/hard_userlimit_cpu_freq
+-- 调度 (uclamp)
+top-app · 下限 = (不存在)
+    node: /dev/cpuctl/top-app/cpu.uclamp.min
+top-app · 上限 = (不存在)
+    node: /dev/cpuctl/top-app/cpu.uclamp.max
+foreground · 下限 = (不存在)
+    node: /dev/cpuctl/foreground/cpu.uclamp.min
+foreground · 上限 = (不存在)
+    node: /dev/cpuctl/foreground/cpu.uclamp.max
+background · 下限 = (不存在)
+    node: /dev/cpuctl/background/cpu.uclamp.min
+background · 上限 = (不存在)
+    node: /dev/cpuctl/background/cpu.uclamp.max
+-- 平台限制器
+系统总频率上限 = (不存在)
+    node: /proc/perfmgr/syslimiter/syslimiter_limit_freq
+Boost 控制 = (不存在)
+    node: /proc/perfmgr/boost_ctrl/cpu_ctrl/cpu_ctrl_enable
+FPSGO 帧率上限 = (不存在)
+    node: /sys/kernel/fpsgo/fbt/limit_cfreq
+FPSGO 帧率下限 = (不存在)
+    node: /sys/kernel/fpsgo/fbt/limit_rfreq
+-- 温控
+温控频率上限 = (不存在)
+    node: /proc/ppm/policy/thermal_limit
+当前热功耗 = (不存在)
+    node: /proc/ppm/policy/thermal_cur_power
+温控策略索引 = (不存在)
+    node: /proc/perfmgr/thermal_policy
+-- 触控加速
+触控加速状态 = (不存在)
+    node: /proc/perfmgr/tchbst/user/usrtch
+CCI 模式 = (不存在)
+    node: /proc/cpufreq/cpufreq_cci_mode
+
+============================================================
+== 运行日志(39 条)
+============================================================
+20:23:18.120  I  App  MTK God 0.3.3 (build 6) 启动
+20:23:18.138  I  AppLog  日志级别设为 信息
+20:23:18.149  I  CpuControl  载入状态: handler=0, 已应用 0 组设置
+20:23:18.182  I  AppLog  日志级别设为 信息
+20:23:20.083  I  CpuControl  记录硬件范围: policy0 300-2000MHz, policy4 550-2850MHz, policy7 600-3400MHz
+20:23:25.773  I  AppLog  日志级别设为 信息
+20:23:30.609  I  AppLog  日志级别设为 信息
+20:24:18.095  I  PerfLock  [cpu] 下发: 0x00400000=2000000, 0x00404000=2000000, 0x00400100=2850000, 0x00404100=2850000, 0x00400200=3400000, 0x00404200=3400000 (duration=无限)
+20:24:18.128  I  PerfLock  [cpu] 已应用 handler=12995
+20:24:18.540  I  CpuControl  内核实际上下限(应用 t+400ms): 读取失败
+20:24:19.644  I  CpuControl  内核实际上下限(应用 t+1500ms): 读取失败
+20:24:21.148  I  CpuControl  内核实际上下限(应用 t+3000ms): 读取失败
+20:24:57.464  I  PerfLock  [cpu] 已释放旧请求 handler=12995
+20:24:57.665  I  PerfLock  [cpu] 下发: 0x00400000=2000000, 0x00404000=2000000, 0x00400100=2850000, 0x00404100=2850000, 0x00400200=3400000, 0x00404200=3400000 (duration=无限)
+20:24:57.682  I  PerfLock  [cpu] 已应用 handler=13213
+20:24:58.088  I  CpuControl  内核实际上下限(应用 t+400ms): 读取失败
+20:24:59.191  I  CpuControl  内核实际上下限(应用 t+1500ms): 读取失败
+20:25:00.695  I  CpuControl  内核实际上下限(应用 t+3000ms): 读取失败
+20:25:01.031  I  PerfLock  [cpu] 释放请求 handler=13213 -> 调频已释放
+20:25:01.457  I  CpuControl  内核实际上下限(释放 t+400ms): 读取失败
+20:25:02.568  I  CpuControl  内核实际上下限(释放 t+1500ms): 读取失败
+20:25:04.082  I  CpuControl  内核实际上下限(释放 t+3000ms): 读取失败
+20:25:05.487  I  PerfLock  [cpu] 下发: 0x00400000=2000000, 0x00404000=2000000, 0x00400100=2850000, 0x00404100=2850000, 0x00400200=3400000, 0x00404200=3400000 (duration=无限)
+20:25:05.498  I  PerfLock  [cpu] 已应用 handler=13230
+20:25:05.905  I  CpuControl  内核实际上下限(应用 t+400ms): 读取失败
+20:25:07.010  I  CpuControl  内核实际上下限(应用 t+1500ms): 读取失败
+20:25:08.514  I  CpuControl  内核实际上下限(应用 t+3000ms): 读取失败
+20:25:19.282  I  PerfLock  [cpu] 已释放旧请求 handler=13230
+20:25:19.483  I  PerfLock  [cpu] 下发: 0x00400000=1700000, 0x00404000=2000000, 0x00400100=2600000, 0x00404100=2850000, 0x00400200=2900000, 0x00404200=3300000 (duration=无限)
+20:25:19.499  I  PerfLock  [cpu] 已应用 handler=13269
+20:25:19.908  I  CpuControl  内核实际上下限(应用 t+400ms): 读取失败
+20:25:21.010  I  CpuControl  内核实际上下限(应用 t+1500ms): 读取失败
+20:25:22.514  I  CpuControl  内核实际上下限(应用 t+3000ms): 读取失败
+20:25:26.790  I  PerfLock  [cpu] 已释放旧请求 handler=13269
+20:25:26.992  I  PerfLock  [cpu] 下发: 0x00400000=1500000, 0x00404000=1600000, 0x00400100=1900000, 0x00404100=2100000, 0x00400200=2000000, 0x00404200=2100000 (duration=无限)
+20:25:27.005  I  PerfLock  [cpu] 已应用 handler=13296
+20:25:27.415  I  CpuControl  内核实际上下限(应用 t+400ms): 读取失败
+20:25:28.518  I  CpuControl  内核实际上下限(应用 t+1500ms): 读取失败
+20:25:30.022  I  CpuControl  内核实际上下限(应用 t+3000ms): 读取失败
