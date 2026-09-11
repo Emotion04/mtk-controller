@@ -26,6 +26,7 @@ effect on hardware**. Those are the problems worth attention.
 | [docs/protocol.md](docs/protocol.md) | MediaTek PowerHAL: ids, transactions, value semantics — with primary sources |
 | [docs/pitfalls.md](docs/pitfalls.md) | Mistakes already made here, and the rule each one produced |
 | [docs/architecture.md](docs/architecture.md) | Layers, the `CpuControl` invariants, device adaptation, testing |
+| [docs/ui.md](docs/ui.md) | Screens, navigation, the segment bar's gestures, design language |
 | [docs/handoff.md](docs/handoff.md) | Current state, open problems, what to do next |
 | [docs/device-vivo-v2430a.md](docs/device-vivo-v2430a.md) | What the development device exposes — and what it does not |
 

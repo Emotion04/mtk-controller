@@ -90,6 +90,9 @@ Invariants, enforced structurally rather than remembered:
 
 ## 1.4 What is implemented
 
+Screen-by-screen description, interaction model and design language:
+[ui.md](ui.md). The summary below is the functional list.
+
 - CPU frequency floor/ceiling per cluster; release; profiles; home dashboard
 - Governor per cluster (best-effort, usually needs root, the UI says so)
 - GPU page (goes through sysfs, **not** PowerHAL)
@@ -436,6 +439,7 @@ In order. Do not skip 1.
 
 | task | file |
 |---|---|
+| what the app looks like and how it is operated | [ui.md](ui.md) |
 | the protocol, with sources | [protocol.md](protocol.md) |
 | why something is the way it is | [pitfalls.md](pitfalls.md) |
 | layers, invariants, testing gaps | [architecture.md](architecture.md) |
