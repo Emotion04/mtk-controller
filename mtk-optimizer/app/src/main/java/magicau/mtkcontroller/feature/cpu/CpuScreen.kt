@@ -53,6 +53,7 @@ fun CpuScreen(
     onRange: (Int, Int, Int) -> Unit,
     onApply: () -> Unit,
     onRelease: () -> Unit,
+    onEmergencyRestore: () -> Unit,
     onSaveProfile: (String) -> Unit,
     modifier: Modifier = Modifier,
     onResume: () -> Unit = {},
@@ -129,6 +130,15 @@ fun CpuScreen(
                         modifier = Modifier.weight(1f),
                     ) { Text("释放") }
                 }
+
+                // Deliberately not styled as a normal action: it is the way out
+                // of a cluster pinned by a lost request, which no other control
+                // can undo.
+                OutlinedButton(
+                    onClick = onEmergencyRestore,
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("紧急恢复(直接写内核,绕过 PowerHAL)") }
 
                 OutlinedButton(
                     onClick = { showSaveDialog = true },

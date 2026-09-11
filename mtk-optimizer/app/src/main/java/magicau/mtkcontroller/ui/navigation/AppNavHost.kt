@@ -126,6 +126,7 @@ fun AppNavHost(container: AppContainer, modifier: Modifier = Modifier) {
                     onRange = vm::setRange,
                     onApply = vm::apply,
                     onRelease = vm::release,
+                    onEmergencyRestore = vm::emergencyRestore,
                     onSaveProfile = vm::saveAsProfile,
                     onResume = vm::recheckPowerHal,
                 )

@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import magicau.mtkcontroller.data.log.AppLog
 import magicau.mtkcontroller.data.powerhal.PerfLockController
+import magicau.mtkcontroller.data.privilege.PrivilegeManager
 import magicau.mtkcontroller.data.powerhal.PowerHal
 import magicau.mtkcontroller.data.sysfs.Sysfs
 import magicau.mtkcontroller.domain.model.ClusterSetting
@@ -50,6 +51,8 @@ class CpuControl(
          * than once separates the two cases, and the last sample is the one
          * reported as the result.
          */
+        const val SETTLE_MS = 400L
+
         val SAMPLE_DELAYS_MS = longArrayOf(400L, 1_500L, 3_000L)
     }
 
@@ -91,6 +94,92 @@ class CpuControl(
         store.setBaseline(limits)
         _status.value = _status.value.copy(baseline = limits)
         AppLog.i(TAG, "记录硬件范围: $limits")
+    }
+
+    /**
+     * Last-resort recovery: write the hardware range straight into the kernel.
+     *
+     * PowerHAL cannot loosen anything. Its merge is `floor = max(all floors)` and
+     * `ceiling = min(all ceilings)`, so a request whose handle was lost keeps
+     * clamping the cluster and no new request can undo it — the only ways out
+     * are releasing that exact handle (impossible once it is lost) or rebooting.
+     *
+     * Writing `scaling_max_freq`/`scaling_min_freq` through the elevated shell
+     * bypasses PowerHAL entirely and is the one non-reboot route left. It only
+     * works where those nodes are writable by the elevated uid: with Shizuku
+     * started as root yes, over adb usually not. Each cluster is reported
+     * separately so a partial recovery is visible rather than assumed.
+     *
+     * Ceiling is written before floor so `min <= max` holds at every moment.
+     */
+    suspend fun emergencyRestore(clusters: List<CpuCluster>): Outcome {
+        if (clusters.isEmpty()) return Outcome(false, "未检测到 CPU 簇")
+
+        val before = readLimits(clusters)
+        AppLog.i(TAG, "紧急恢复开始,当前: ${before ?: "读取失败"}")
+
+        // Whatever PowerHAL was holding is about to be overwritten underneath
+        // it, so its bookkeeping is dropped either way.
+        lock.release()
+
+        // Route 1 — write the hardware range straight into the kernel. Only
+        // works where those nodes are writable by the elevated uid, which means
+        // Shizuku started as root; over adb (uid 2000) it usually is not.
+        val failures = mutableListOf<String>()
+        clusters.forEach { cluster ->
+            val dir = "${CpuScanner.CPUFREQ_ROOT}/${cluster.policy}"
+            val hardwareMax = Sysfs.read("$dir/cpuinfo_max_freq")
+            val hardwareMin = Sysfs.read("$dir/cpuinfo_min_freq")
+            if (hardwareMax == null || hardwareMin == null) {
+                failures += cluster.policy
+                return@forEach
+            }
+            // Ceiling first so min <= max holds at every moment.
+            val maxOk = Sysfs.write("$dir/scaling_max_freq", hardwareMax)
+            val minOk = Sysfs.write("$dir/scaling_min_freq", hardwareMin)
+            AppLog.i(
+                TAG,
+                "紧急恢复[直接写] ${cluster.policy}: max=$hardwareMax(${if (maxOk) "成功" else "失败"}) " +
+                    "min=$hardwareMin(${if (minOk) "成功" else "失败"})",
+            )
+            if (!maxOk || !minOk) failures += cluster.policy
+        }
+        delay(SETTLE_MS)
+        val afterDirect = readLimits(clusters)
+        if (afterDirect != null && afterDirect != before) {
+            _status.value = _status.value.copy(handler = 0, applied = emptyList(), observedLimits = afterDirect)
+            return Outcome(true, "已直接写回硬件范围 · 当前 $afterDirect")
+        }
+
+        // Route 2 — make the platform rewrite the limits itself by cycling
+        // power-save. `settings` is writable by the shell uid, so this works
+        // over adb where the sysfs write does not: toggling the mode makes the
+        // vendor power service re-evaluate and re-push every limit, which
+        // overwrites the stale one.
+        AppLog.i(TAG, "紧急恢复[直接写] 无效,改用切换省电模式让平台重算")
+        val original = PrivilegeManager.exec("settings get global low_power")?.trim()?.take(1)
+        PrivilegeManager.exec("settings put global low_power 1")
+        delay(SETTLE_MS)
+        PrivilegeManager.exec("settings put global low_power 0")
+        delay(SETTLE_MS * 3)
+        // Put the user's own setting back rather than assuming it was off.
+        if (original == "1") PrivilegeManager.exec("settings put global low_power 1")
+
+        val afterCycle = sampleLimits(clusters, "紧急恢复")
+        _status.value = _status.value.copy(handler = 0, applied = emptyList(), observedLimits = afterCycle)
+
+        return when {
+            afterCycle != null && afterCycle != before ->
+                Outcome(true, "已通过切换省电模式让平台重写限制 · 当前 $afterCycle")
+            failures.size == clusters.size ->
+                Outcome(
+                    false,
+                    "两条路都没成功 —— 内核节点不可写(Shizuku 是 adb 模式),省电模式切换也没能让平台重写。" +
+                        "只能重启手机。",
+                )
+            else ->
+                Outcome(false, "未能恢复 · 当前 ${afterCycle ?: "读取失败"} —— 请重启手机")
+        }
     }
 
     /**
