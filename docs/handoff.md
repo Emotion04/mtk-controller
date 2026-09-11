@@ -90,6 +90,9 @@ Invariants, enforced structurally rather than remembered:
 
 ## 1.4 What is implemented
 
+Screen-by-screen description, interaction model and design language:
+[ui.md](ui.md). The summary below is the functional list.
+
 - CPU frequency floor/ceiling per cluster; release; profiles; home dashboard
 - Governor per cluster (best-effort, usually needs root, the UI says so)
 - GPU page (goes through sysfs, **not** PowerHAL)
@@ -423,6 +426,30 @@ In order. Do not skip 1.
 4. **Run S3's experiment**: small values on every cluster, then read back.
 5. Only then start on P1 with real evidence.
 
+## The reference material
+
+`reference/` holds the third-party material this protocol was worked out from:
+the reference application's APK, the decompiler output for it, memory dumps, and
+the vendor files fetched from public repositories while researching PowerHAL.
+
+**It is git-ignored except for its own `README.md`** — those files are a third
+party's, and this repository is public. `reference/README.md` lists what is in
+each subdirectory and where it came from.
+
+Two things to know before using it:
+
+- **`reference/decompiled/smali/` is the reliable copy.** A Java decompiler cannot
+  rebuild Kotlin suspend-function state machines or inline lambda bodies — it
+  emits dispatch stubs with the real logic missing, which is why a call site
+  searched for in the Java output appeared not to exist. The smali has it. When
+  something cannot be found in the Java, search the smali before concluding it is
+  not there. This is recorded in [pitfalls.md](pitfalls.md#10).
+- **The protocol facts are in [protocol.md](protocol.md), with sources** — prefer
+  those over re-reading the dump. The dump is for questions the facts do not
+  answer.
+
+Nothing under `reference/` is needed to build or run the app.
+
 ## Rules that have already cost time
 
 - `reference/` holds third-party material and is git-ignored except its README.
@@ -438,7 +465,9 @@ In order. Do not skip 1.
 
 | task | file |
 |---|---|
+| what the app looks like and how it is operated | [ui.md](ui.md) |
 | the protocol, with sources | [protocol.md](protocol.md) |
+| third-party reference material, and how to read it | `reference/README.md` |
 | why something is the way it is | [pitfalls.md](pitfalls.md) |
 | layers, invariants, testing gaps | [architecture.md](architecture.md) |
 | what this device can and cannot observe | [device-vivo-v2430a.md](device-vivo-v2430a.md) |
