@@ -36,6 +36,10 @@ import magicau.mtkcontroller.feature.gpu.GpuScreen
 import magicau.mtkcontroller.feature.gpu.GpuViewModel
 import magicau.mtkcontroller.feature.home.HomeScreen
 import magicau.mtkcontroller.feature.home.HomeViewModel
+import magicau.mtkcontroller.feature.lab.LabPanelScreen
+import magicau.mtkcontroller.feature.lab.LabPanelViewModel
+import magicau.mtkcontroller.feature.lab.LabScreen
+import magicau.mtkcontroller.feature.lab.LabViewModel
 import magicau.mtkcontroller.feature.notifications.NotificationScreen
 import magicau.mtkcontroller.feature.profile.ProfileScreen
 import magicau.mtkcontroller.feature.profile.ProfileViewModel
@@ -174,6 +178,7 @@ fun AppNavHost(container: AppContainer, modifier: Modifier = Modifier) {
                     onOpenDiagnostics = { navController.navigate(SubRoutes.DIAGNOSTICS) },
                     onOpenNotifications = { navController.navigate(SubRoutes.NOTIFICATIONS) },
                     onOpenLogs = { navController.navigate(SubRoutes.LOGS) },
+                    onOpenLab = { navController.navigate(SubRoutes.LAB) },
                     onExportBackup = vm::exportBackup,
                     onPrepareImport = vm::prepareImport,
                     onConfirmImport = vm::confirmImport,
@@ -221,6 +226,34 @@ fun AppNavHost(container: AppContainer, modifier: Modifier = Modifier) {
                         onRequestPermission = vm::requestPermission,
                         onVerify = vm::verifyApplied,
                     )
+                }
+            }
+
+            composable(SubRoutes.LAB) {
+                val vm: LabViewModel = viewModel(
+                    factory = containerViewModelFactory { LabViewModel(container) },
+                )
+                val state by vm.state.collectAsStateWithLifecycle()
+                SubScreenScaffold("实验室", onBack = navController::popBackStack) {
+                    LabScreen(
+                        state = state,
+                        onOpenPanel = { navController.navigate(SubRoutes.LAB_PANEL) },
+                        onValueChange = vm::setValue,
+                        onHoldChange = vm::setHold,
+                        onTest = vm::test,
+                        onResetAll = vm::resetAll,
+                        onClearObservations = vm::clearObservations,
+                    )
+                }
+            }
+
+            composable(SubRoutes.LAB_PANEL) {
+                val vm: LabPanelViewModel = viewModel(
+                    factory = containerViewModelFactory { LabPanelViewModel(container) },
+                )
+                val state by vm.state.collectAsStateWithLifecycle()
+                SubScreenScaffold("只读面板", onBack = navController::popBackStack) {
+                    LabPanelScreen(state = state, onRefresh = vm::refresh)
                 }
             }
 

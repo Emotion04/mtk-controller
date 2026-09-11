@@ -38,8 +38,20 @@ Thumbs.db
 .claude/
 
 # Research scratch — working files fetched or dumped while investigating a device.
-# Never publish: some are verbatim third-party vendor files.
-_*
-tmp/
-g*.json
-gh*.json
+#
+# Never publish these. Several are third-party vendor files redistributed
+# verbatim (MediaTek kernel headers, powerhint/scentbl XMLs, command tables);
+# others are dumps derived from a third party's binary. The *facts* learned from
+# them live in docs/protocol.md, with sources named — that is the part worth
+# keeping, and it is ours to publish.
+#
+# Anchored with a leading slash on purpose: a bare `src/` also matches
+# `mtk-optimizer/app/src/`, which silently keeps the app's own new source files
+# out of the repository.
+/_*
+/tmp/
+/g*.json
+/gh*.json
+/hdrs/
+/src/
+/s_*.xml

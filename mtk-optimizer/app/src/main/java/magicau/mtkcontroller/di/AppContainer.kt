@@ -5,6 +5,9 @@ import magicau.mtkcontroller.data.backup.BackupRepository
 import magicau.mtkcontroller.data.cpu.CpuScanner
 import magicau.mtkcontroller.data.cpu.CpuControl
 import magicau.mtkcontroller.data.cpu.CpuControlStore
+import magicau.mtkcontroller.data.lab.LabController
+import magicau.mtkcontroller.data.powerhal.PerfHandlerStore
+import magicau.mtkcontroller.data.powerhal.PerfLockController
 import magicau.mtkcontroller.data.diag.CapabilityProbe
 import magicau.mtkcontroller.data.gpu.GpuScanner
 import magicau.mtkcontroller.data.gpu.GpuTuner
@@ -30,9 +33,17 @@ class AppContainer(appContext: Context) {
 
     val cpuScanner = CpuScanner()
 
+    /** Live PowerHAL handles, one slot per independent area of control. */
+    private val perfHandlerStore = PerfHandlerStore(context)
+
     /** The single entry point for CPU frequency control. */
-    private val cpuControlStore = CpuControlStore(context)
-    val cpuControl = CpuControl(cpuControlStore)
+    val cpuControl = CpuControl(CpuControlStore(context), PerfLockController(perfHandlerStore, "cpu"))
+
+    /**
+     * The canary lab gets its own handle, so an experiment can never disturb
+     * the CPU limits the user is relying on.
+     */
+    val labController = LabController(context, PerfLockController(perfHandlerStore, "lab"))
 
     val gpuScanner = GpuScanner()
     val gpuTuner = GpuTuner()

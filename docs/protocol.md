@@ -68,12 +68,19 @@ Do not hardcode. See [architecture.md](architecture.md#transaction-code-detectio
 ## 3. Command id layout
 
 ```
-id = MAJOR << 22 | MINOR << 8 | INDEX
+id = MAJOR << 22 | MINOR << 14 | GROUP << 8
 ```
 
-`INDEX` selects the cluster / instance, `MINOR` selects a sub-family within `MAJOR`, and
-`MAJOR` selects the resource area. For CPU frequency this reduces to the simple form seen in
-practice:
+`MAJOR` selects the subsystem (`1` CPUFREQ, `2` CPU cores, `3` GPU, `4` DRAM, `5` scheduler,
+`6` APU, `7` power, `8` FPS, `9` display, `10`/`11` network and IO, `13` touch, `64` OEM),
+`MINOR` the sub-feature, and `GROUP` the low enumeration slot.
+
+> An earlier revision of this file wrote the middle field as `MINOR << 8`. That is a
+> convenient shorthand — it happens to give the right answer for CPU frequency, because
+> there `MINOR` is 0 — but it is wrong in general. Use the `<<14` form when synthesising ids
+> outside the CPU frequency family.
+
+For CPU frequency it does reduce to the simple form seen in practice:
 
 ```
 id = base + 0x100 * policy_index
@@ -149,6 +156,10 @@ cluster's floor to its maximum, which destroys any range you had set.
 | `/sys/devices/system/cpu/cpufreq/policyN/scaling_min_freq` / `scaling_max_freq` | integer kHz | where the result is observable |
 | `/proc/cpudvfs/cpufreq_debug` | `"<cluster> <min> <max>"` | the one MTK interface carrying a full range in a single write; needs root |
 | `/sys/kernel/fpsgo/fbt/limit_cfreq`, `limit_rfreq` | integer | FPSGO per-cluster ceiling/floor |
+| `/proc/perfmgr/syslimiter/syslimiter_limit_freq` | integer kHz | the platform's own master frequency cap (`POWER_SYSLIMITER`, `0x01C40400`) |
+| `/proc/ppm/policy/thermal_limit`, `thermal_cur_power` | integer | what the thermal engine is currently enforcing |
+| `/proc/cpufreq/cpufreq_cci_mode` (older) / `/proc/cpuhvfs/cpufreq_cci_mode` (mt6879+) | `0`/`1` | CCI mode: **a binary flag, not a frequency** |
+| `/proc/perfmgr/tchbst/user/usrtch` | integer | touch-boost state, shared with MTK's own tuning |
 
 ### Why a range can appear to collapse
 
@@ -179,6 +190,67 @@ protocol looks like when used correctly — not as a specification.
   values in the last pair.
 - It treated a returned handle as proof of success. On-device read-back shows it is not —
   see [pitfalls.md](pitfalls.md#2).
+
+## 8. Identifying the binder before trusting it
+
+The same service name can be answered by a different vendor's HAL — that is not hypothetical,
+see section 10. Before sending anything, ask the binder who it is:
+
+```
+transact(0x5F4E5446, emptyParcel, reply, 0)   // INTERFACE_TRANSACTION
+descriptor = reply.readString()               // must be "com.mediatek.powerhalmgr.IPowerHalMgr"
+```
+
+`INTERFACE_TRANSACTION` is a Binder meta-transaction answered **before** AIDL dispatch and
+before any permission check, so it sits outside the generated stub's range-guarded
+`enforceInterface` and an **empty parcel is enough**. No method body runs; there is no side
+effect at all.
+
+Two gotchas:
+
+- It must go through `IBinder.transact()`. `ShizukuBinderWrapper.getInterfaceDescriptor()`
+  returns **null**, because the wrapper is not the generated Stub.
+- If the descriptor is not MTK's, do not guess an id space — fall back to a sysfs-only mode.
+  Never decide the id space by trial acquire.
+
+## 9. Ids that are not ours: `0x40804100` and friends
+
+A vendor framework class was observed using `PERF_RES_CPUFREQ_MAX_CLUSTER_0 = 0x40804100`,
+`_CLUSTER_1 = 0x40804000`, `_CLUSTER_2 = 0x40804200`, `PERF_RES_GPU_FREQ_MAX = 0x42808000`.
+An earlier revision of this file described that as "a shifted MTK id space". **That was
+wrong.** The values are **Qualcomm MPCTLV3 resource ids** — Qualcomm publishes the array
+`{0x40C00000, 0x1, 0x40804000, 0xFFF, 0x40804100, 0xFFF, …}`, and the low 16 bits coincide
+with MTK's semantics by coincidence. In MTK's encoding `0x40804100` decodes to `MAJOR = 258`,
+which MediaTek never defines.
+
+The practical consequence is the opposite of "other phones may not support it": **those ids
+are not MTK resources at all**, and an MTK device should use the `0x0040xxxx` family. A vendor
+that ships both MediaTek and Qualcomm variants in one framework class is the likely
+explanation for seeing them together.
+
+## 10. Probing safely
+
+- **Pass a short non-zero `duration` when the request is a probe.** The normal path uses `0`
+  (never expires), which is what makes a lost release permanent.
+- **`querySysInfo` is the safe target for discovering transaction codes** — it is read-only.
+  There is also a fully inert enumeration: `transact(200, emptyParcel, reply, 0)` tells you
+  which stub generation the interface uses, after which codes `1..40` can be swept with
+  **empty parcels**; a `SecurityException` on `readException()` means "the method exists"
+  while no method body executes.
+- **Read the codes instead of probing them** where possible. `com.mediatek.powerhalmgr.*`
+  lives on the boot classpath, and SELinux permits an app domain to read `system_file`, so the
+  `TRANSACTION_*` constants can be pulled straight out of the vendor jar's DEX. Resolve the
+  jar path via `getCodeSource().getLocation()` rather than hard-coding a filename.
+
+## 11. Id drift between BSP revisions
+
+Ids are **not** stable across device generations even within MediaTek's own namespace. The
+same logical resource was observed at `0x0143C100` on one platform and at `0x0143C200` on a
+newer one — a two-`MINOR` shift. FPS and scheduler ids disagree between vendor tables in
+several places.
+
+**Consequence:** hard-coding any id outside the small CPU-frequency family is unsafe. Probe,
+and treat an unfamiliar device as a fresh problem.
 
 ## Sources
 

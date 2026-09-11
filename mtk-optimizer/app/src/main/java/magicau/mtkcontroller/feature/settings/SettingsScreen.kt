@@ -73,6 +73,7 @@ private val NavIcon = Color(0xFF7A8FA6)
 private val LogIcon = Color(0xFF6B6B68)
 private val ReapplyIcon = Color(0xFF9C4146)
 private val BackupIcon = Color(0xFF4A6572)
+private val LabIcon = Color(0xFF6A4C93)
 
 @Composable
 fun SettingsScreen(
@@ -89,6 +90,7 @@ fun SettingsScreen(
     onOpenDiagnostics: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenLogs: () -> Unit,
+    onOpenLab: () -> Unit,
     onExportBackup: (android.net.Uri) -> Unit,
     onPrepareImport: (android.net.Uri) -> Unit,
     onConfirmImport: () -> Unit,
@@ -349,6 +351,17 @@ fun SettingsScreen(
                 title = "运行日志",
                 subtitle = "查看应用最近的探测与操作记录",
                 onClick = onOpenLogs,
+            )
+        }
+
+        SectionLabel("实验室")
+        SettingsCard {
+            SettingsRow(
+                icon = Icons.Filled.Info,
+                iconTint = LabIcon,
+                title = "只读面板",
+                subtitle = "内核实际在执行哪些限制 —— 不做任何写入",
+                onClick = onOpenLab,
             )
         }
 

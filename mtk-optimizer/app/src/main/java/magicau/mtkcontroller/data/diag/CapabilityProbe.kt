@@ -29,6 +29,8 @@ data class CapabilityReport(
     val remoteUid: Int? = null,
     val remoteBound: Boolean = false,
     val powerHalAvailable: Boolean = false,
+    /** Interface descriptor the binder reported; null when unreachable. */
+    val powerHalDescriptor: String? = null,
     val cpuClusters: List<CpuCluster> = emptyList(),
     val gpu: GpuInfo = GpuInfo(),
     val checks: List<Check> = emptyList(),
@@ -60,6 +62,11 @@ class CapabilityProbe(
         val remoteUid = if (remoteBound) PrivilegeManager.remoteUid() else null
 
         val powerHal = privilege.mode.canElevate && PowerHal.isAvailableNow()
+        // Zero-side-effect identity check: an empty-parcel INTERFACE_TRANSACTION
+        // is answered by Binder itself, before any AIDL dispatch. It settles
+        // whether this really is MTK's HAL rather than another vendor's service
+        // of the same name.
+        val descriptor = if (powerHal) runCatching { PowerHal.descriptor() }.getOrNull() else null
 
         // Diagnostics is where you go to see the truth, so bypass the cache.
         gpuScanner.invalidate()
@@ -113,6 +120,17 @@ class CapabilityProbe(
                         "可调用 —— 频率上下限可用"
                     } else {
                         "未找到 —— 非 MTK 设备或权限不足"
+                    },
+                )
+            )
+            add(
+                CapabilityReport.Check(
+                    CheckCategory.CPU, "接口标识",
+                    ok = descriptor == PowerHal.INTERFACE_TOKEN,
+                    detail = when {
+                        descriptor == null -> "未取到 —— 非 MTK 设备或权限不足"
+                        descriptor == PowerHal.INTERFACE_TOKEN -> "$descriptor · 与预期一致"
+                        else -> "$descriptor · 与预期不符,可能不是 MTK PowerHAL"
                     },
                 )
             )
@@ -182,6 +200,7 @@ class CapabilityProbe(
             remoteUid = remoteUid,
             remoteBound = remoteBound,
             powerHalAvailable = powerHal,
+            powerHalDescriptor = descriptor,
             cpuClusters = clusters,
             gpu = gpu,
             checks = checks,

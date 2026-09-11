@@ -41,4 +41,6 @@ object SubRoutes {
     const val NOTIFICATIONS = "settings/notifications"
     const val TWEAKS = "settings/tweaks"
     const val LOGS = "settings/logs"
+    const val LAB = "settings/lab"
+    const val LAB_PANEL = "settings/lab/panel"
 }
