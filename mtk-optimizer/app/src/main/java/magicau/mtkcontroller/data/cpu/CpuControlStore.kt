@@ -2,7 +2,6 @@ package magicau.mtkcontroller.data.cpu
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
@@ -21,16 +20,8 @@ class CpuControlStore(private val context: Context) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    private val handlerKey = intPreferencesKey("cpu_handler")
     private val baselineKey = stringPreferencesKey("cpu_baseline_limits")
     private val appliedKey = stringPreferencesKey("cpu_last_applied")
-
-    /** PowerHAL handle from the live request, or 0 when we hold none. */
-    suspend fun handler(): Int = context.profileStore.data.first()[handlerKey] ?: 0
-
-    suspend fun setHandler(value: Int) {
-        context.profileStore.edit { it[handlerKey] = value }
-    }
 
     /**
      * `scaling_min_freq`/`scaling_max_freq` as they were before this app ever

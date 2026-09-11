@@ -1,7 +1,6 @@
 package magicau.mtkcontroller.data.diag
 
 import android.os.Build
-import magicau.mtkcontroller.data.log.AppLog
 import magicau.mtkcontroller.data.log.LogEntry
 import magicau.mtkcontroller.data.powerhal.PowerHal
 import java.text.SimpleDateFormat
@@ -47,6 +46,11 @@ object DiagReport {
             appendLine("(尚未探测:请先打开 设置 → 诊断信息 并点一次「重新探测」)")
             appendLine()
         } else {
+            section("接口标识")
+            appendLine("expected     : ${PowerHal.INTERFACE_TOKEN}")
+            appendLine("reported     : ${report.powerHalDescriptor ?: "(取不到)"}")
+            appendLine()
+
             section("提权")
             appendLine("mode         : ${report.privilege.mode}")
             appendLine("uid          : ${report.privilege.uid}")

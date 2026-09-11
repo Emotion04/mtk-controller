@@ -38,7 +38,14 @@ Thumbs.db
 .claude/
 
 # Local scratch — working files kept out of the repository.
-_*
-tmp/
-g*.json
-gh*.json
+#
+# Anchored with a leading slash on purpose: a bare `src/` also matches
+# `mtk-optimizer/app/src/`, which silently keeps the app's own new source files
+# out of the repository.
+/_*
+/tmp/
+/g*.json
+/gh*.json
+/hdrs/
+/src/
+/s_*.xml

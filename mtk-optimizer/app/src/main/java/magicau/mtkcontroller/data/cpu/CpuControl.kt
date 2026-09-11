@@ -4,9 +4,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import magicau.mtkcontroller.data.log.AppLog
+import magicau.mtkcontroller.data.powerhal.PerfLockController
 import magicau.mtkcontroller.data.powerhal.PowerHal
 import magicau.mtkcontroller.data.sysfs.Sysfs
 import magicau.mtkcontroller.domain.model.ClusterSetting
@@ -15,26 +14,25 @@ import magicau.mtkcontroller.domain.model.CpuCluster
 /**
  * The one owner of CPU frequency control.
  *
- * Everything that touches PowerHAL goes through here — the CPU screen, the home
- * dashboard, the profile list and the re-apply service all call [apply] and
- * [release] and nothing else. That is deliberate: the same five-step sequence
- * (release the old handle, acquire, keep the new handle, persist what was
- * applied, verify) used to be copy-pasted into six call sites, and every bug in
- * this area was one of them forgetting a step. Now the sequence exists once and
- * the invariants are structural:
+ * Everything that touches PowerHAL's CPU frequency resources goes through here —
+ * the CPU screen, the home dashboard, the profile list and the re-apply service
+ * all call [apply] and [release] and nothing else. That is deliberate: the
+ * release-then-acquire sequence used to be copy-pasted into six call sites, and
+ * every bug in this area was one of them forgetting a step.
  *
- *  - a handle is only forgotten once its release was confirmed, because a live
- *    request we no longer know about keeps clamping the cluster forever
- *  - an acquire is never issued while we still hold a handle, because PowerHAL
- *    requests accumulate rather than replace, and because libpowerhal merges
- *    every enabled scenario (floor = max of floors, ceiling = min of ceilings)
- *    one stale lock makes later ceilings look ignored
- *  - [apply] and [release] are serialised by a mutex, so the re-apply service
- *    and a ViewModel cannot interleave into two live handles
+ * The request-side invariants (release before acquire, never forget an
+ * unreleased handle, serialise) live in [PerfLockController], which is shared
+ * with the lab so there is exactly one implementation of them.
  *
- * Protocol notes and the command-id table live in [PowerHal].
+ * What is specific to CPU frequency is the *verification*: limits are read back
+ * from the kernel because the service returning a handle says nothing about
+ * whether the value landed, and because libpowerhal merges every live request —
+ * one stale lock makes later ceilings look ignored.
  */
-class CpuControl(private val store: CpuControlStore) {
+class CpuControl(
+    private val store: CpuControlStore,
+    private val lock: PerfLockController,
+) {
 
     private companion object {
         const val TAG = "CpuControl"
@@ -43,9 +41,9 @@ class CpuControl(private val store: CpuControlStore) {
          * How long to let libpowerhal settle before reading limits back.
          *
          * An acquire's commands are applied one at a time on the service side
-         * and the transaction returns before that finishes, so an immediate
-         * read catches a half-applied batch — which reads exactly like a
-         * "collapsed range" that is not actually collapsed.
+         * and the transaction returns before that finishes, so an immediate read
+         * catches a half-applied batch — which reads exactly like a "collapsed
+         * range" that is not actually collapsed.
          */
         const val SETTLE_MS = 400L
     }
@@ -62,21 +60,15 @@ class CpuControl(private val store: CpuControlStore) {
         val releaseIncomplete: Boolean = false,
     )
 
-    private val mutex = Mutex()
-
     private val _status = MutableStateFlow(Status())
     val status: StateFlow<Status> = _status.asStateFlow()
 
     /** Pull persisted state into memory. Safe to call more than once. */
     suspend fun load() {
-        val handler = store.handler()
+        val handler = lock.handler()
         val baseline = store.baseline()
         val applied = store.lastApplied()
-        _status.value = _status.value.copy(
-            handler = handler,
-            baseline = baseline,
-            applied = applied,
-        )
+        _status.value = _status.value.copy(handler = handler, baseline = baseline, applied = applied)
         AppLog.i(TAG, "载入状态: handler=$handler, 已应用 ${applied.size} 组设置")
     }
 
@@ -85,12 +77,12 @@ class CpuControl(private val store: CpuControlStore) {
     /**
      * Remember the untouched limits while nothing of ours is applied.
      *
-     * This is what lets a later release be checked: "did the kernel actually go
-     * back to where it started", which a oneway release call cannot tell us.
+     * This is what lets a later release be checked: "did the kernel go back to
+     * where it started", which a oneway release call cannot tell us.
      */
     suspend fun captureBaselineIfClean(clusters: List<CpuCluster>) {
         if (store.baseline() != null) return
-        if (store.handler() != 0) return
+        if (lock.handler() != 0) return
         val limits = readLimits(clusters) ?: return
         store.setBaseline(limits)
         _status.value = _status.value.copy(baseline = limits)
@@ -104,21 +96,9 @@ class CpuControl(private val store: CpuControlStore) {
      * that release fails, because acquiring on top of a live request is what
      * makes a cluster appear locked at a value nobody asked for.
      */
-    suspend fun apply(clusters: List<CpuCluster>, settings: List<ClusterSetting>): Outcome = mutex.withLock {
-        if (clusters.isEmpty()) return@withLock Outcome(false, "未检测到 CPU 簇")
-        if (settings.isEmpty()) return@withLock Outcome(false, "未选择任何簇")
-
-        val current = store.handler()
-        if (current > 0) {
-            val released = PowerHal.release(current)
-            if (released is PowerHal.Result.Failure) {
-                AppLog.w(TAG, "释放旧请求失败,放弃本次应用: ${released.message}")
-                return@withLock Outcome(false, "无法释放上一次调频请求:${released.message}")
-            }
-            store.setHandler(0)
-            _status.value = _status.value.copy(handler = 0)
-            AppLog.i(TAG, "已释放上一次请求 handler=$current")
-        }
+    suspend fun apply(clusters: List<CpuCluster>, settings: List<ClusterSetting>): Outcome {
+        if (clusters.isEmpty()) return Outcome(false, "未检测到 CPU 簇")
+        if (settings.isEmpty()) return Outcome(false, "未选择任何簇")
 
         val byPolicy = clusters.associateBy { it.policy }
         val pairs = mutableListOf<Pair<String, String>>()
@@ -129,28 +109,19 @@ class CpuControl(private val store: CpuControlStore) {
             val floor = minOf(low, high)
             val ceiling = maxOf(low, high)
 
-            // Soft floor and ceiling only. The hard-limit pair (see PowerHal)
-            // is a separate mechanism: setting both halves to one value is the
-            // documented way to hard-lock a cluster, so pushing a user range
-            // there pins instead of bounding. Hard limits stay with the
-            // platform's thermal policy.
+            // Soft floor and ceiling only. The hard-limit pair is a separate
+            // mechanism — setting both halves to one value hard-locks the
+            // cluster — so it is left to the platform's thermal policy.
             pairs += PowerHal.commandId(PowerHal.BASE_MIN, cluster.index) to floor.toString()
             pairs += PowerHal.commandId(PowerHal.BASE_MAX, cluster.index) to ceiling.toString()
         }
-        if (pairs.isEmpty()) return@withLock Outcome(false, "没有匹配到可用的簇")
+        if (pairs.isEmpty()) return Outcome(false, "没有匹配到可用的簇")
 
-        AppLog.i(TAG, "应用调频: " + pairs.joinToString(", ") { "${it.first}=${it.second}" })
+        // duration 0: a limit the user asked for should stay until released.
+        val applied = lock.apply(pairs, durationMs = 0)
+        if (!applied.success) return Outcome(false, applied.message)
 
-        val acquired = PowerHal.acquire(pairs)
-        if (acquired is PowerHal.Result.Failure) {
-            AppLog.e(TAG, "调频失败: ${acquired.message}")
-            return@withLock Outcome(false, acquired.message)
-        }
-        val handler = (acquired as PowerHal.Result.Success).handler
-        store.setHandler(handler)
         store.setLastApplied(settings)
-        AppLog.i(TAG, "调频已应用, handler=$handler")
-
         val governorNote = applyGovernors(clusters, settings)
 
         delay(SETTLE_MS)
@@ -158,13 +129,13 @@ class CpuControl(private val store: CpuControlStore) {
         if (observed != null) AppLog.i(TAG, "内核实际上下限: $observed")
 
         _status.value = _status.value.copy(
-            handler = handler,
+            handler = lock.handler(),
             applied = settings,
             observedLimits = observed,
             releaseIncomplete = false,
         )
 
-        return@withLock Outcome(
+        return Outcome(
             success = true,
             message = listOfNotNull("调频已应用", governorNote).joinToString(" · "),
         )
@@ -173,22 +144,14 @@ class CpuControl(private val store: CpuControlStore) {
     /**
      * Release our request and report whether the kernel came back.
      *
-     * A oneway release returning success proves nothing, so the result is
-     * judged by reading the limits back against the baseline recorded before we
-     * ever touched anything.
+     * A oneway release returning success proves nothing, so the result is judged
+     * by reading the limits back against the baseline recorded before we ever
+     * touched anything.
      */
-    suspend fun release(clusters: List<CpuCluster>): Outcome = mutex.withLock {
-        val handler = store.handler()
-        if (handler <= 0) {
-            AppLog.w(TAG, "释放请求:没有已记录的 handler")
-            return@withLock Outcome(false, "没有可释放的请求")
-        }
+    suspend fun release(clusters: List<CpuCluster>): Outcome {
+        val released = lock.release()
+        if (!released.success) return Outcome(false, released.message)
 
-        val released = PowerHal.release(handler)
-        AppLog.i(TAG, "释放请求 handler=$handler -> ${released.message}")
-        if (released is PowerHal.Result.Failure) return@withLock Outcome(false, released.message)
-
-        store.setHandler(0)
         store.setLastApplied(emptyList())
 
         delay(SETTLE_MS)
@@ -205,7 +168,7 @@ class CpuControl(private val store: CpuControlStore) {
             releaseIncomplete = stuck,
         )
 
-        return@withLock Outcome(
+        return Outcome(
             success = true,
             message = buildString {
                 append("调频已释放")
@@ -213,13 +176,6 @@ class CpuControl(private val store: CpuControlStore) {
                 if (stuck) append(" · 仍与初始值不同,可能有旧的调频请求残留;重启 Shizuku 可彻底清除")
             },
         )
-    }
-
-    /** Drop our bookkeeping without touching the service, e.g. after a reboot. */
-    suspend fun forget() {
-        store.setHandler(0)
-        store.setLastApplied(emptyList())
-        _status.value = _status.value.copy(handler = 0, applied = emptyList())
     }
 
     /**
