@@ -139,7 +139,49 @@ Related, found the same way: `*.jar` had been excluding
 `gradle/wrapper/gradle-wrapper.jar`, so a fresh clone could not run `./gradlew` at all. Negate
 that one back in (`!path/to/gradle-wrapper.jar`) — it is part of the source, not an artifact.
 
-## 13. Do not ship a control whose semantics are unverified
+## 13. PowerHAL can tighten but never loosen
+
+The merge across live requests is `floor = max(all floors)` and
+`ceiling = min(all ceilings)`, plus "if ceiling < floor, raise ceiling to floor".
+
+Read that again as a *recovery* constraint: **once a request holds a floor, no
+new request can lower it, and once it holds a ceiling, no new request can raise
+it.** The only way to undo one is to release that exact handle.
+
+Consequences that follow, and that this project learned the hard way:
+
+- **Losing a handle is not a bookkeeping slip, it is permanent.** The cluster
+  stays clamped until the device reboots.
+- Uninstalling the app does not help — the value is already in the kernel.
+- Stopping Shizuku does not help either (observed on the device): powerhal does
+  not appear to revoke a client's requests when the client dies.
+- Acquiring "the full range" as a corrective request does nothing, for the reason
+  in the first paragraph.
+
+The only non-reboot escape is to bypass PowerHAL entirely and write
+`scaling_min_freq` / `scaling_max_freq` yourself, which needs those nodes
+writable — i.e. root. `CpuControl.emergencyRestore` tries that, then a
+power-save cycle that makes the platform rewrite its own limits, and reports
+per-cluster whether either worked.
+
+**Rule.** Treat every handle as unrecoverable if lost. Release before acquiring,
+never clear a handle whose release failed, and serialise the two so a background
+service and a screen cannot interleave into two live handles.
+
+## 14. An unchanged `versionCode` makes "did it install?" unanswerable
+
+Hand-off builds all carried `versionCode = 1`. The system treats an equal version
+code as the same build, so an install could quietly do nothing while the old code
+kept running. The result was an evening of bug reports describing behaviour that
+had already been removed from the source weeks earlier — the lab "missing", the
+old UI, the old log tags.
+
+**Rule.** Bump `versionCode` for every build someone else is expected to install,
+and surface the version where they will see it: the startup log line, the log
+screen header, and the diagnostic report. "Which build are you running" should
+never be a question that needs a round trip.
+
+## 15. Do not ship a control whose semantics are unverified
 
 `setPriorityByUid` / `flushPriorityRules` look like a **rule table** — system-wide, possibly
 persistent, possibly affecting scheduling and network for other apps. The method names are

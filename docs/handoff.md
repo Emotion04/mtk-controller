@@ -1,131 +1,391 @@
 # Handoff
 
-State of the project as of 2026-09-11. Read [protocol.md](protocol.md) first if the task is
-about PowerHAL behaviour, and [pitfalls.md](pitfalls.md) before changing anything in
-`data/cpu/`.
+Written for whoever picks this up next — human or agent. **Read this whole file
+before changing anything in `mtk-optimizer/app/src/main/java/.../data/cpu/` or
+`data/powerhal/`.**
+
+## How to read this document
+
+Three parts, and they are not equally trustworthy:
+
+| part | status |
+|---|---|
+| **1. Facts** | Established from primary sources or observed on the device. Treat as true. |
+| **2. Open problems** | The complete list of what is *not* solved. The symptoms are real; the causes are not established. |
+| **3. Speculation** | **Guesses.** Labelled, with a confidence and a way to test each. Do not act on these as if they were facts. |
+
+If something below turns out to be wrong, fix the document in the same commit
+that proves it wrong.
 
 ---
 
-## What this is
+# 1. Facts
 
-An Android app that sets CPU/GPU frequency limits on MediaTek SoCs, without root, through
-Shizuku. Built from scratch after studying how a reference implementation on the device did
-it. Only the soft CPU frequency pair is written; see
-[protocol.md](protocol.md#4-cpu-frequency-resources) for why.
+## 1.1 What this is
 
-Package `magicau.mtkcontroller`, label **MTK God**, `minSdk 33` / `targetSdk 37`.
+An Android app that sets CPU frequency limits on MediaTek SoCs **without root**,
+through [Shizuku](https://shizuku.rikka.app/). It talks to MediaTek's PowerHAL
+manager directly.
 
-## What works
+- Package `magicau.mtkcontroller`, label **MTK God**
+- `versionCode 2` / `versionName 0.2.0`
+- `minSdk 33`, `targetSdk 37`, Kotlin + Compose + Material 3
+- Build: `cd mtk-optimizer && ./gradlew assembleDebug`
+- **Bump `versionCode` on every hand-off build.** It was left at `1` for many
+  builds; the system treats an equal version code as the same build, updates
+  silently did nothing, and the user spent an evening reporting bugs in code that
+  was weeks old. This is not hypothetical.
+- The running version is shown in the log screen header and the startup log line,
+  so "which build is installed" is always answerable.
 
-- CPU frequency floors/ceilings per cluster, applied through PowerHAL
-- Release back to the platform's own scheduling
-- Governor per cluster (best-effort — the node usually needs root, and the UI says so)
-- GPU page, profiles, home dashboard with live frequency chart
-- Settings: theme mode (light/dark/system), palette, nav bar style, apply mode, log level
-- **Apply modes**: single-shot, or polling re-apply from a foreground service
-- **Backup**: export/import all profiles and preferences as JSON
-- **Diagnostic report**: copy or export a full device snapshot for adaptation
-- Diagnostics screen with a capability probe
+## 1.2 The device this was developed against
 
-## What is verified, and what is not
+| | |
+|---|---|
+| Model | vivo V2430A |
+| SoC | MediaTek Dimensity 9300+ / MT6989 |
+| Android | 16 (API 36) |
+| Shizuku | started from **wireless debugging** → runs as **shell, uid 2000, not root** |
+| cpufreq policies | `policy0` (cpu0-3), `policy4` (cpu4-6), `policy7` (cpu7) |
 
-**Verified on a real device (vivo V2430A, Dimensity 9300+, Android 16):**
+The **enumeration order of the policy directories is the command index**. Nothing
+may assume a fixed cluster layout.
+
+## 1.3 Architecture — the one rule that matters
+
+**All CPU frequency control goes through `CpuControl`.** Nothing else calls
+`PowerHal.acquire` / `PowerHal.release`, and nothing else stores a handle.
+
+That is not stylistic. The sequence — release the stored handle, abort if that
+fails, acquire, keep the new handle, persist what was applied, wait for the batch
+to settle, read back — used to be copy-pasted into six call sites, and every bug
+in this area was one of them forgetting a step.
+
+| layer | file | responsibility |
+|---|---|---|
+| wire format | `data/powerhal/PowerHal.kt` | ids, transacts, parcel layout |
+| handle lifecycle | `data/powerhal/PerfLockController.kt` | one named handle; release-before-acquire, never forget, serialise |
+| handle persistence | `data/powerhal/PerfHandlerStore.kt` | one slot per named purpose |
+| CPU policy + verification | `data/cpu/CpuControl.kt` | the only CPU entry point |
+| CPU persistence | `data/cpu/CpuControlStore.kt` | baseline, replay settings |
+| cluster discovery | `data/cpu/CpuScanner.kt` | policies, frequencies, governors |
+| canary features | `data/lab/*` | declared as data; `LabController` drives them |
+| device probe | `data/diag/*` | capability probe + the report users send back |
+
+Invariants, enforced structurally rather than remembered:
+
+- a handle is only forgotten once its release was confirmed
+- an acquire is never issued while a handle is held
+- apply/release are serialised by a mutex
+- **the lab has its own handle**, so an experiment can never disturb the CPU
+  limits the user is relying on
+- **graduating a canary out of the lab requires giving it its own
+  `PerfLockController`** — see the class doc on `LabController`
+
+## 1.4 What is implemented
+
+- CPU frequency floor/ceiling per cluster; release; profiles; home dashboard
+- Governor per cluster (best-effort, usually needs root, the UI says so)
+- GPU page (goes through sysfs, **not** PowerHAL)
+- Apply modes: single-shot, or polling re-apply from a foreground service
+- Backup export/import (JSON, two-phase)
+- Read-only diagnostic panel + a device report users can copy and send
+- Canary lab: 17 declared features across 6 areas, each reporting whether the
+  device actually moved
+- Settings: theme mode, palette, nav bar, apply mode, log level
+
+## 1.5 Verified on the device
 
 - PowerHAL is reachable through Shizuku and returns valid handles
-- The command array format, ids and transaction codes behave as documented
+- The command array format is correct: values do reach the kernel — frequencies
+  have been observed changing after an apply
+- `scaling_min_freq` follows what the app sends — **in some runs**
 - The read-back of `scaling_min_freq` / `scaling_max_freq` reflects service state
+- `/proc/ppm/policy/hard_userlimit_cpu_freq` **does not exist** on this device
 
-**Not verified:**
+## 1.6 Never verified — do not describe these as working
 
-- **Whether a soft min/max range takes effect end-to-end on this device.** The code sends it
-  and the protocol supports it, but every on-device observation so far has been confounded by
-  stranded requests from earlier builds. See "Known open problem" below — this is the first
-  thing to re-test.
-- GPU control (the GPU page is present; the PowerHAL GPU path is not used at all — GPU goes
-  through sysfs)
-- Anything on a device other than the one above
+- **A minimum ≠ maximum range has never been observed to take effect.** Every
+  attempt was either unchanged in the kernel or confounded by earlier state.
+- GPU control on any device
+- **Every feature in the lab.** All 17 are canaries; none is confirmed.
+- Anything on a device other than the one in §1.2
+- The scrolling-jank fix described in §2 P13
 
-## Known open problem: stranded requests
+---
 
-Builds before the current one wrote the user's range into the **hard-limit** pair and did not
-reliably release their handles. Hard limits are sticky, and a request whose handle was lost
-cannot be released.
+# 2. Open problems
 
-**On the test device there are almost certainly such requests still clamping clusters.** They
-will survive app upgrades.
+Everything still unresolved. Ordered by how much they block useful work.
 
-**Clearing them:** restart Shizuku (which is the process that issues the calls), or reboot.
-Do this before evaluating any change to frequency behaviour, otherwise the measurement is
-against a polluted device.
+## P1 — Frequency control stops responding after several applies 🔴
 
-The current code prevents new ones — see [architecture.md](architecture.md#the-one-rule-that-matters-cpucontrol)
-— and says so when a release does not return the kernel to its hardware range.
+**Symptom.** The first few applies change the frequency. After a while, further
+applies change nothing — same values or different, the kernel does not move.
+Sometimes a single-frequency apply still works, sometimes not.
 
-**This is the leading explanation for three reported symptoms** that look unrelated:
-a cluster pinned at a value nobody set, control degrading after several adjustments, and
-"the floor works but the ceiling is ignored". The merge rule above produces all three from a
-single stale request. Read `实验室 → 只读面板 → 谁在限制`, which compares the silicon's range
-(`cpuinfo_*`) against the live `scaling_*` range and shows the gap.
+**Evidence.** Confirmed by the user with an **external CPU monitor**, not just the
+app's own read-back. The log shows applies accepted with valid handles whose
+values had not moved.
 
-A caveat worth keeping: a gap is not proof of a stale request — the platform's own thermal and
-power-saving logic clamps too. The same panel shows power-save mode, thermal status and
-battery, so the two causes can be told apart.
+**Ruled out.** Hard limits (their node does not exist on this device — §1.5).
 
-## Immediate next steps
+**This is the most important problem.** Everything else is secondary.
 
-1. **Re-test a range on a clean device state.** Restart Shizuku, confirm the log shows the
-   baseline matching stock, then apply an asymmetric range and read the log's
-   `内核实际上下限` line. That single line settles the question.
-2. **Transaction code detection** — the app hardcodes 22/23/24, which is correct on the test
-   device and not portable. Implements the read-only scheme in
-   [architecture.md](architecture.md#transaction-code-detection).
-3. **Run the canary lab** (设置 → 实验室). 17 features, each reporting whether the device
-   actually moved. Whatever comes back 生效 can be promoted; see the graduation rule in
-   `LabController`.
-4. **Move the PowerHAL calls into the app's own UserService.** Today they are forwarded
-   through Shizuku's process, so MTK sees *Shizuku* as the client — which means stranded
-   requests can only be cleared by restarting Shizuku. Issuing the transaction from inside
-   `RuntimeUserService` would make the app the client, and then restarting *our* service is a
-   one-tap clean-up. This turns "reboot to recover" into a button.
-5. **First tests** for `CpuControl` — see
-   [architecture.md](architecture.md#testing). `PowerHal` needs to become an interface.
+## P2 — A cluster can be left pinned with no in-app recovery 🔴
 
-## Deliberately not done
+**Symptom.** A cluster ends up locked at a fixed frequency. Uninstalling the app,
+stopping Shizuku, and reinstalling all fail to clear it. Only a reboot works.
 
-- **`setPriorityByUid` / `flushPriorityRules`.** They look like a system-wide rule table with
-  unknown blast radius and possible persistence. Not shipping until the semantics are
-  established. See [pitfalls.md](pitfalls.md#13).
-- **Hard limits.** Only the soft pair is written; hard limits are left to the platform's
-  thermal policy.
-- **CCI as a naive slider.** Raising the interconnect clock only helps when cross-cluster
-  communication is the bottleneck; otherwise it spends power that the CPU clusters share a
-  budget with. If exposed at all, it belongs in the Lab at stock default with that warning.
-- **`PERF_RES_CPUFREQ_PERF_MODE`** is understood but not wired up yet — it sets every floor to
-  its maximum, which destroys any range in effect.
+**Why — this part is fact.** PowerHAL's merge is `floor = max(all floors)`,
+`ceiling = min(all ceilings)`, plus "if ceiling < floor, raise ceiling to floor".
+A live request whose handle has been lost therefore keeps clamping, and **no new
+request can loosen it**. Releasing that exact handle is the only in-app fix, and
+the handle is gone.
 
-## Repository hygiene
+**Mitigation shipped** (`CpuControl.emergencyRestore`, button at the bottom of the
+CPU screen):
 
-All third-party material lives in **`reference/`** — the reference app's APK, the decompiler
-output, memory dumps, and the vendor files fetched while researching the protocol. That folder
-is git-ignored except for its own `README.md`, which explains what is in it and where it came
-from.
+1. write `scaling_max_freq` / `scaling_min_freq` directly, bypassing PowerHAL —
+   needs those nodes writable by the elevated uid, i.e. Shizuku as **root**
+2. cycle power-save mode so the vendor power service re-evaluates and re-pushes
+   its limits — `settings` is shell-writable, so this can work over **adb**
 
-**Keep it that way.** Those files are a third party's, or derived from a third party's binary,
-and this repository is public. What gets published is the *fact* — `docs/protocol.md` records
-the protocol with its sources named, and that part is ours.
+**Not yet tested.** If both fail, the honest answer to the user is "reboot".
 
-`git status` should never show anything under `reference/` except `README.md`.
+## P3 — The ceiling does not appear to take effect 🟠
 
-`mtk-optimizer/` is self-contained: nothing there depends on `reference/`.
+**Symptom.** The floor is honoured; the ceiling is not. Frequencies go above the
+requested maximum. The user also describes a boundary: values below some
+frequency work, values above it do not.
+
+**Evidence.** Apply sent `policy4 min=2700 max=2850` → kernel read back
+`2400-2400`. Apply sent `policy7 min=3250 max=3400` → kernel `2100-2100`.
+Neither matched the request and neither had moved from the previous reading.
+
+## P4 — The prime cluster is pinned outside the requested range 🟠
+
+**Symptom.** `policy7` (the single X4 core) locks at a value that was never
+requested, while the other clusters behave.
+
+**Note.** In the readings seen, `policy7` sat at 2100 MHz while `policy4` sat at
+2400 MHz — the prime core capped *below* the mid cluster, which is not what the
+silicon's own range suggests.
+
+## P5 — Floor and ceiling behave asymmetrically on release 🟠
+
+**Symptom.** On release, `scaling_min_freq` returns to its stock value but
+`scaling_max_freq` does not.
+
+**Correction, important.** An earlier version of this document treated the
+non-returning ceiling as proof of a stale request. **That was wrong.** Readings of
+the same device after the same release gave 2200 MHz once and 2400 MHz later with
+nothing of ours applied — the ceiling floats with the platform's own thermal and
+DCVS state. The comparison is a *pointer*, not a verdict.
+
+## P6 — Power-save / low battery defeats the limits 🟠
+
+The user reports that in power-save mode, or at low battery, frequency control
+stops taking effect. It happens rarely. Cause unidentified.
+
+## P7 — Range support has never been demonstrated 🔴
+
+The protocol permits a floor/ceiling pair and MediaTek's own tests use asymmetric
+values, but **this app has never shown a range working on hardware**. See P1–P5.
+
+## P8 — Transaction codes are hardcoded 🟠
+
+`PowerHal.TRANSACT_ACQUIRE` / `RELEASE` are `0x16` / `0x17`; `querySysInfo` is
+`0x18`. These are correct **on the development device only** — they are AIDL
+declaration order, so they shift when the ROM's interface revision changes.
+
+A read-only detection scheme is designed in
+[architecture.md](architecture.md#transaction-code-detection) and **not
+implemented**. The descriptor probe (`PowerHal.descriptor`) is implemented and is
+the zero-side-effect way to identify the binder first.
+
+## P9 — Requests are issued by Shizuku, not by this app 🟠
+
+`ShizukuBinderWrapper` routes the transaction through Shizuku's process, so MTK
+sees **Shizuku** as the client. The app cannot attribute requests to itself and
+cannot clean up after itself.
+
+Moving the `transact` into `RuntimeUserService` (the app's own elevated process)
+would make the app the client. **Not started.**
+
+## P10 — `policy0`'s `scaling_max_freq` reads as absent 🟡
+
+The read-only panel reports the node as not existing for `policy0`, while the same
+node reads fine for `policy4` and `policy7`, and `policy0/scaling_cur_freq` reads
+fine. **Unexplained** — it may be a read failure rather than a missing node.
+
+## P11 — No automated tests 🟡
+
+None. Everything in [protocol.md](protocol.md) came from primary sources and
+on-device observation, and `CpuControl`'s invariants are enforced by construction —
+but nothing prevents a regression. The highest-value first tests are listed in
+[architecture.md](architecture.md#testing).
+
+## P12 — The lab is entirely unverified 🟡
+
+17 canary features, none confirmed on hardware. **Eight have no read-back node at
+all**, so `LabController` can only report "cannot judge" for those — that is
+deliberate and honest, not a bug to fix by guessing a node.
+
+## P13 — The scrolling-jank fix has not been re-tested 🟡
+
+The probe code used to read nodes one at a time, each with its own elevated
+fallback, which on a device missing most of those nodes meant dozens of shell
+process spawns per screen visit. That is now a single batched call
+(`Sysfs.readMany`). **The user has not confirmed the stutter is gone.**
+
+## P14 — Several features have unknown or disputed semantics 🟡
+
+- `PERF_RES_THERMAL_POLICY` values live in **encrypted** vendor blobs; the
+  meanings are not derivable from public sources
+- `PERF_RES_DRAM_OPP_MIN` direction is disputed (MTK-derived evidence says index
+  0 = fastest; two community tools write the opposite)
+- `PERF_RES_CPUFREQ_CCI_FREQ` is a **0/1 mode flag, not a frequency**
+- GPU resources take an **OPP index**, CPU resources take **kHz** — mixing them
+  is a silent no-op
+- `setPriorityByUid` / `flushPriorityRules` have **no public evidence**; do not
+  bind code to those names
+
+## P15 — Re-apply service behaviour against stale state is untested 🟡
+
+`CpuReapplyService` calls `CpuControl.apply` on a timer. It has never been run
+against a device already holding stale requests.
+
+---
+
+# 3. Speculation — NOT FACTS
+
+Every entry here is a guess. Each says how confident it is and what would settle
+it. **Do not build on these without testing first.**
+
+### S1 — Stale requests from pre-fix builds explain P1, P3, P4 and P5
+*Confidence: medium.*
+
+Builds before the `PerfLockController` refactor acquired a new request on every
+apply **without releasing the previous one**, and cleared the stored handle even
+when the release failed. Each such apply is a request that can never be released.
+Under the merge rule (P2), accumulated stale requests would produce exactly the
+observed pattern: a floor that only rises, a ceiling that can never be raised,
+and eventually no response at all.
+
+**Why it might be wrong.** The user reported the device still pinned after
+uninstall, stop-Shizuku and reinstall — which stale requests *would* explain — but
+the current build has never been tested on a device confirmed clean by a reboot.
+Until that happens, "the bug is only in old builds" is unproven.
+
+**How to test.** Reboot. Check the log's hardware-range line looks sane. Apply
+once, read back. Apply again, read back. If both work, S1 is likely right.
+
+### S2 — The 400 ms read-back was too short and reported half-applied batches
+*Confidence: low.*
+
+libpowerhal applies a command array one entry at a time and the transaction
+returns first, so a single 400 ms sample cannot distinguish "not applied yet" from
+"never applied".
+
+**Why it might be wrong.** The user watched an external CPU monitor and saw the
+frequency not change at all, which rules this out *as the cause of P1* — but the
+read-back is still the app's only evidence, so the ambiguity matters.
+
+**How to test.** `CpuControl` now samples at 400 ms / 1.5 s / 3 s and logs all
+three. If they differ, this was real; if all three agree, it was not.
+
+### S3 — The service clamps values at its own idea of the cluster maximum
+*Confidence: low.*
+
+`perfservice` was reported to clamp with
+`param_1 >= ptClusterTbl[i].freqMax ? freqMax : param_1`, and to replace an
+at-or-above-maximum ceiling with "no limit". If the service's cluster table is
+smaller than the frequencies the app offers, large values would silently do
+nothing while small ones work — which would match the reported boundary.
+
+**How to test.** Apply deliberately small values (`min=1500 max=2000`) to every
+cluster. If those work and large ones do not, this is likely right.
+
+### S4 — The ceiling id is not the effective ceiling on this device
+*Confidence: low.*
+
+`0x00404000` (`PERF_RES_CPUFREQ_MAX_CLUSTER_n`) is confirmed as a real resource by
+name and value, but that does not prove it is what constrains this particular BSP.
+Alternative levers exist: the perfmgr path, `POWER_SYSLIMITER`, or the hard-limit
+pair — whose node is absent here, so not that one.
+
+**How to test.** S3's experiment distinguishes this from S3: if small values work
+*and* a ceiling above them is honoured, the id works and S3 was the issue.
+
+### S5 — PowerHAL does not revoke a client's requests when the client dies
+*Confidence: medium-high.*
+
+The user stopped Shizuku and the pinned frequency persisted. If powerhal cleaned
+up on binder death, stopping Shizuku should have cleared it.
+
+**Why it might be wrong.** Something else could have been holding the value, and
+the observation is a single data point from a build with known bugs.
+
+### S6 — The jank was shell-process spawns from the probe code
+*Confidence: medium.*
+
+Dozens of `Runtime.exec` calls per screen visit is enough CPU to stutter the whole
+system, and the timing matches — the stutter appeared after the lab was added.
+Batching was the fix.
+
+**How to test.** The user scrolls after installing a build that has
+`Sysfs.readMany`. Not yet done.
+
+### S7 — Hard limits were never involved
+*Confidence: high.*
+
+`/proc/ppm/policy/hard_userlimit_cpu_freq` does not exist on this device, and the
+implementation was reported to be a no-op when that node is absent. Older builds
+did write the hard-limit ids, which makes them an attractive suspect — but the
+node is not there.
+
+**How to test.** Effectively already tested; keep the read-only panel's
+"硬限制 (全局)" line visible as a standing check.
+
+---
+
+# 4. First actions for the next agent
+
+In order. Do not skip 1.
+
+1. **Ask the user to reboot the device.** It is the only reliable way out of P2,
+   and testing against a device holding stale state has already wasted several
+   rounds.
+2. **Confirm which build is installed** — the log screen header shows the version.
+   If it is not the build you just made, stop; the install did not take.
+3. **Read the read-only panel, section 「谁在限制」.** It is the *first* section;
+   the user has twice looked for it below the fold. It shows the hardware range
+   against the live range, plus power-save, thermal status and battery.
+4. **Run S3's experiment**: small values on every cluster, then read back.
+5. Only then start on P1 with real evidence.
+
+## Rules that have already cost time
+
+- `reference/` holds third-party material and is git-ignored except its README.
+  **Keep it that way** — this repository is public.
+- Every new write path must read its result back. "The service returned a handle"
+  and "the value landed" are different facts, and only the second matters.
+- Probe before offering a control; hide what the device does not accept.
+- Do not ship a control whose semantics are not established — an unavailable
+  feature is a smaller problem than a system-wide side effect.
+- **Bump `versionCode` on every hand-off build.**
 
 ## Where to look
 
 | task | file |
 |---|---|
-| the protocol, with sources | `docs/protocol.md` |
-| why something is the way it is | `docs/pitfalls.md` |
-| layers and invariants | `docs/architecture.md` |
+| the protocol, with sources | [protocol.md](protocol.md) |
+| why something is the way it is | [pitfalls.md](pitfalls.md) |
+| layers, invariants, testing gaps | [architecture.md](architecture.md) |
 | CPU control | `data/cpu/CpuControl.kt` |
+| handle lifecycle | `data/powerhal/PerfLockController.kt` |
 | wire format | `data/powerhal/PowerHal.kt` |
 | device probe | `data/diag/CapabilityProbe.kt` |
 | the report users send back | `data/diag/DiagReport.kt` |
+| canary feature catalog | `data/lab/LabFeature.kt` |

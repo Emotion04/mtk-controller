@@ -8,8 +8,10 @@ domain/      Plain data models, no Android          (Profile, ClusterSetting, Cp
 data/        Everything that touches the device
   privilege/   Shizuku: permission, binder, the elevated user service
   powerhal/    The AIDL surface only — ids, transactions, parcel layout
-  sysfs/       Kernel text nodes: read, write, write-probe
+               PerfLockController + PerfHandlerStore: one named handle's lifecycle
+  sysfs/       Kernel text nodes: read, write, write-probe, batched read
   cpu/         CpuControl (the coordinator) + CpuControlStore + CpuScanner
+  lab/         LabFeature catalogue + LabController + LabProbe (read-only panel)
   gpu/         GpuScanner + GpuTuner
   diag/        CapabilityProbe + DiagReport
   settings/    DataStore preferences
@@ -51,12 +53,43 @@ Now it exists once, and the invariants are structural rather than remembered:
 `CpuControlStore` is persistence. `CpuControl` is policy. `PowerHal` is wire format. `Sysfs`
 is kernel nodes. Each is replaceable without touching the others.
 
-## Why a "settle" delay exists
+### The same rule, one level down
 
-`apply` and `release` wait `SETTLE_MS` (400 ms) before reading limits back, because the
-service applies a command array one entry at a time and the transaction returns first.
-Reading immediately reports a half-applied batch as if it were the result — which is exactly
-how a working range was once misdiagnosed as an API limitation. See
+The request-side invariants live in `PerfLockController`, so there is exactly one
+implementation of them and the lab gets them for free. **Each independent area of
+control gets its own instance and its own stored handle**, which is why an
+experiment in the lab can never disturb the CPU limits the user is relying on:
+
+```kotlin
+CpuControl(    PerfLockController(store, "cpu") )   // the CPU screen
+LabController( PerfLockController(store, "lab") )   // every canary experiment
+```
+
+**Graduating a canary into a real feature means giving it its own controller**,
+the way `CpuControl` has one. Reusing the lab's would mean a promoted feature is
+silently dropped the next time someone runs a different experiment.
+
+### A stuck handle has no in-app way out
+
+PowerHAL can tighten but never loosen — `floor = max(all floors)`,
+`ceiling = min(all ceilings)`. So a request whose handle is lost clamps its cluster
+until the device reboots. `CpuControl.emergencyRestore` is the one attempt at a
+non-reboot escape: write the hardware range directly to
+`scaling_max_freq`/`scaling_min_freq` (needs root), then cycle power-save so the
+platform rewrites its own limits (works over adb, because `settings` is
+shell-writable). It reports per cluster which, if either, worked. See
+[pitfalls.md](pitfalls.md#13).
+
+## Why the limits are sampled more than once
+
+`apply` and `release` read the kernel back at **400 ms, 1.5 s and 3 s**, log all
+three, and report the last.
+
+The service applies a command array one entry at a time and the transaction returns
+first, so a single early read cannot tell "not applied yet" from "never applied" —
+and the app has no other evidence available. A single 400 ms sample was once read
+as a collapsed range; it may simply have been a half-applied batch. Three samples
+make the difference visible instead of arguable. See
 [pitfalls.md](pitfalls.md#2).
 
 ## Transaction code detection
@@ -110,14 +143,23 @@ returned a handle" and "the value landed" are different facts and only the secon
 
 ## Testing
 
-There are currently **no automated tests**. Everything in `docs/protocol.md` was established
-from primary sources and on-device observation, and `CpuControl`'s invariants are enforced by
-construction — but nothing prevents a regression.
+**There are no automated tests.** Everything in [protocol.md](protocol.md) came
+from primary sources and on-device observation, and `CpuControl`'s invariants are
+enforced by construction — but nothing prevents a regression, and this codebase
+has already regressed twice in ways a single test would have caught.
 
-The highest-value tests to add first, all possible without a device:
+Highest value first, all runnable without a device:
 
-- `CpuControl`: given a store with a live handle, `apply` must release before acquiring, and
-  must not clear the handle when the release fails. (`PowerHal` is an object — it needs to
-  become an interface for this, which is worth doing anyway.)
-- `DiagReport`: the report contains the cluster enumeration order.
-- `BackupRepository`: a file missing newer fields imports without clearing them.
+1. **`CpuControl.apply` releases before acquiring.** Given a store holding a live
+   handle, the order of calls to `PowerHal` must be release-then-acquire.
+2. **`CpuControl.apply` does not clear a handle whose release failed.** The old
+   behaviour stranded a live request; this is the bug behind the worst symptom
+   the project has.
+3. **`CpuControl.release` reports what the kernel says**, not what the oneway
+   transaction returned.
+4. **`DiagReport` contains the cluster enumeration order** — that mapping is the
+   command index, and a device report without it cannot be acted on.
+5. **`BackupRepository` import of an older file leaves absent fields alone.**
+
+Tests 1–3 need `PowerHal` to become an interface rather than an `object`. That is
+worth doing anyway.
