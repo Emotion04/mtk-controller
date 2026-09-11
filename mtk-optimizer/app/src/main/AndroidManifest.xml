@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 只有声明它，系统才会为 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 弹出原生授权对话框；
+         不声明时 Settings 页面可能直接结束，看起来就是“点了没反应”。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 改的是本应用自己的任务；部分 ROM 仍要求这个普通权限才允许 setExcludeFromRecents。 -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <queries><intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent></queries>
+
+    <application
+        android:name=".MtkApp"
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MtkOptimizer"
+        >
+        <!--
+          enableOnBackInvokedCallback 曾设为 true，用来启用系统的预测性返回。
+          **它与 NavMotion.USE_CUSTOM_TRANSITIONS 是一对，改一个必须改另一个。**
+
+          关掉的原因：**系统的预测性返回预览与我们的转场动画是两套，会同时播放。**
+          系统的默认预览是"当前页缩小淡出"，而我们要的是"当前页向右平移"，
+          两者叠加之后看到的是"缩小然后消失"，方向感全无。
+
+          官方没有"只关系统预览、保留自己的动画"的开关：文档给的方案是接管
+          手势的 progress 自己驱动动画，那要在导航图上逐个手接，是一场大改。
+
+          现在的取舍：**要干净的平移，不要冲突的预览。** 返回手势本身照常工作，
+          只是不在滑动过程中预览上一页。
+        -->
+
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MtkOptimizer"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          状态栏快捷开关。标签就是应用名；点击只切换 CPU 频率请求，
+          不碰温控、实验室或 GPU（完整释放仍在 App 里）。
+        -->
+        <service
+            android:name=".feature.quick.CpuTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <service
+            android:name=".feature.notifications.KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User requested keep-alive with a persistent status notification" />
+        </service>
+        <receiver
+            android:name=".feature.notifications.KeepAliveBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".feature.cpu.CpuBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <service android:name=".feature.tweaks.MaintenanceService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User initiated bounded application compilation and cache warmup" />
+        </service>
+        <service android:name=".feature.tweaks.DisplaySessionService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User requested display and touch session with bounded renewal" />
+        </service>
+
+        <service
+            android:name=".feature.thermal.ThermalBrightnessService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Restore screen brightness after thermal throttling" />
+        </service>
+
+        <service
+            android:name=".feature.thermal.AppThermalService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Switch thermal policy when a user-picked app comes to the foreground" />
+        </service>
+
+        <service
+            android:name=".feature.cpu.CpuReapplyService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Re-apply CPU frequency limits that vendor power services overwrite" />
+        </service>
+
+        <!--
+          Shizuku provider. Required for the Shizuku binder to reach this app.
+          multiprocess must be false and exported must be true, or ShizukuProvider
+          throws at attach time.
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!--
+          导出的诊断包经系统分享或"保存到文件"交给用户。
+          exported=false 且 grantUriPermissions=true：只有我们主动授权的接收方
+          能读，其余应用拿不到。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.reports"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/report_paths" />
+        </provider>
+
+    </application>
+
+</manifest>

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  实验室（锥形烧瓶）。
+
+  **为什么不用 Material 图标**：项目只依赖 material-icons-core，那里面只有 56 个图标，
+  没有烧瓶/化学类。引 extended 会为这一个图形涨几十 MB，不划算 —— 自己画一个矢量图
+  是几 KB。
+
+  画法：外轮廓 + 瓶口一道 + 液面一道 + 两个气泡。全部用描边不用填充，和
+  Material 的 outlined 风格一致；颜色无所谓，`Icon` 会整体上色。
+
+  改这个文件时注意：路径坐标是按 24x24 viewport 手算的，液面位置依赖瓶身斜率
+  （左壁从 (10,9) 到 (5,20)，即每降 1 个单位 x 减 5/11）。改瓶形就得重算液面，
+  不然液面会画出瓶外。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- 瓶身：瓶颈 -> 瓶肩 -> 瓶底 -->
+    <path
+        android:pathData="M10,2 L10,9 L5,20 L19,20 L14,9 L14,2"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- 瓶口 -->
+    <path
+        android:pathData="M8,2 L16,2"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- 液面：瓶身在 y=14 处左壁 x=7.73、右壁 x=16.27 -->
+    <path
+        android:pathData="M7.8,14 L16.2,14"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- 气泡。半径取 0.9 / 0.7，都在瓶壁内侧 -->
+    <path
+        android:pathData="M11.1,11.2 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M12.3,12.5 a0.7,0.7 0 1,0 1.4,0 a0.7,0.7 0 1,0 -1.4,0"
+        android:fillColor="#FFFFFFFF" />
+</vector>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  导出的诊断包放在 cache/reports/ 下，通过 FileProvider 交给系统分享。
+  只暴露这一个目录：FileProvider 的路径配置等于一张白名单，
+  写宽了（比如整个 cache）会把不相关的缓存文件也变成可分享的。
+-->
+<paths>
+    <cache-path name="reports" path="reports/" />
+</paths>

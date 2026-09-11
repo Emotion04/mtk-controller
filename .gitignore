@@ -1,0 +1,29 @@
+# Build outputs
+*.apk
+*.idsig
+
+# Gradle wrapper 是唯一的 jar 例外
+*.jar
+!mtk-optimizer/gradle/wrapper/gradle-wrapper.jar
+
+# Android 构建产物
+*.iml
+.gradle/
+.kotlin/
+build/
+captures/
+local.properties
+.idea/
+.externalNativeBuild/
+.cxx/
+
+# 签名证书与密码：不入库，丢失后无法发布覆盖安装的更新
+*.keystore
+*.jks
+signing/
+
+# 本地临时文件
+*.log
+shot_*.png
+.DS_Store
+Thumbs.db

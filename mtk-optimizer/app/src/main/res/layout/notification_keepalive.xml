@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  常驻通知的紧凑内容。**不画 App 图标** —— 系统通知本身就有图标；
+  这里只放一行文字，文字区域负责应用/释放。图标区域仍走系统默认的 contentIntent。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingStart="0dp"
+    android:paddingEnd="0dp"
+    android:paddingTop="2dp"
+    android:paddingBottom="2dp">
+
+    <TextView
+        android:id="@+id/notif_line"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="14sp"
+        android:includeFontPadding="false"
+        android:textColor="?android:attr/textColorPrimary" />
+</LinearLayout>
