@@ -158,6 +158,21 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /**
+     * Bypass PowerHAL and write the hardware range straight to the kernel.
+     * The only escape from a cluster pinned by a request whose handle was lost.
+     */
+    fun emergencyRestore() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, message = null)
+            val clusters = _state.value.edits.map { it.cluster }
+                .ifEmpty { withContext(Dispatchers.IO) { container.cpuScanner.scan(deep = false) } }
+            CpuReapplyService.stop(container.context)
+            val outcome = container.cpuControl.emergencyRestore(clusters)
+            _state.value = _state.value.copy(busy = false, message = outcome.message)
+        }
+    }
+
     fun release() {
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
