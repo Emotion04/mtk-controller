@@ -41,3 +41,11 @@ Thumbs.db
 # silently keeps the app's own new source files out of the repository while the
 # already-tracked ones keep working — so the mistake is invisible until someone
 # clones fresh.
+
+# Cloud-sync client temp files. These appear next to a file while it uploads and
+# have twice ended up staged — they are not part of the project.
+*.uploading.*
+*.baiduyun.*
+*.onedrive.*
+*.dropbox.*
+desktop.ini
