@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.data.diag.CapabilityReport
 import magicau.mtkcontroller.data.diag.DiagReport
+import magicau.mtkcontroller.data.lab.LabProbe
 import magicau.mtkcontroller.data.log.AppLog
 import magicau.mtkcontroller.data.log.LogEntry
 import magicau.mtkcontroller.data.log.LogLevel
@@ -201,18 +202,22 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun reportFileName(): String =
         "mtk-god-report-${System.currentTimeMillis() / 86_400_000}.txt"
 
-    private fun buildReport(): String {
+    private suspend fun buildReport(): String {
         val current = _state.value
-        return DiagReport.build(current.report, current.logEntries)
+        val clusters = runCatching { container.cpuScanner.scan(deep = false) }.getOrDefault(emptyList())
+        val sections = runCatching { LabProbe.readAll(container.context, clusters) }.getOrDefault(emptyList())
+        return DiagReport.build(current.report, current.logEntries, sections)
     }
 
     fun copyReport() {
+        viewModelScope.launch {
         val text = buildReport()
         val clipboard = container.context.getSystemService(android.content.ClipboardManager::class.java)
         clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("MTK God 诊断报告", text))
         _state.value = _state.value.copy(
             backupMessage = "报告已复制(${text.length} 字符),可直接粘贴发送",
         )
+        }
     }
 
     fun exportReport(uri: android.net.Uri) {

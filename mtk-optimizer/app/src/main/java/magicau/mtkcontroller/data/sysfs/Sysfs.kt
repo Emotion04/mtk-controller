@@ -16,6 +16,9 @@ object Sysfs {
 
     private const val TAG_EXIT = "[exit]"
 
+    /** Announces each file in a batched read. */
+    private const val MARKER = "@@@node "
+
     /**
      * Direct read from the app process. Returns null when unreadable.
      *
@@ -26,6 +29,53 @@ object Sysfs {
         runCatching {
             File(path).takeIf { it.canRead() }?.readText()?.trim()
         }.getOrNull()
+    }
+
+    /**
+     * Read many nodes in one go.
+     *
+     * Direct reads first; whatever failed is fetched in a **single** elevated
+     * call. The obvious loop — read, fall back to the shell, read the next —
+     * spawns a process per unreadable node, and on a device that lacks most of
+     * the nodes an exploratory screen probes, that is dozens of process spawns
+     * per visit. That is expensive enough to be felt as stutter everywhere, not
+     * just on that screen.
+     *
+     * Returns null for a path that could not be read by either route.
+     */
+    suspend fun readMany(paths: List<String>): Map<String, String?> = withContext(Dispatchers.IO) {
+        val result = paths.distinct().associateWith { path ->
+            runCatching { File(path).takeIf { it.canRead() }?.readText()?.trim() }.getOrNull()
+        }.toMutableMap()
+
+        val missing = result.filterValues { it == null }.keys.toList()
+        if (missing.isEmpty()) return@withContext result
+
+        // One script, one process. Each block is announced by a marker line so
+        // the values can be told apart without relying on their contents.
+        val script = missing.joinToString("; ") { path ->
+            "echo '$MARKER$path'; cat '${escape(path)}' 2>/dev/null"
+        }
+        val out = PrivilegeManager.exec(script) ?: return@withContext result
+
+        var current: String? = null
+        val buffer = StringBuilder()
+        fun flush() {
+            val key = current ?: return
+            result[key] = buffer.toString().trim().ifBlank { null }
+            buffer.clear()
+        }
+        out.substringBefore(TAG_EXIT).lines().forEach { line ->
+            if (line.startsWith(MARKER)) {
+                flush()
+                current = line.removePrefix(MARKER).trim()
+            } else if (current != null) {
+                if (buffer.isNotEmpty()) buffer.appendLine()
+                buffer.append(line)
+            }
+        }
+        flush()
+        result
     }
 
     /** Read through the elevated shell (for nodes our own uid cannot open). */
