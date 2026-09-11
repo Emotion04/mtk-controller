@@ -18,7 +18,6 @@ import magicau.mtkcontroller.data.settings.SettingsRepository
 import magicau.mtkcontroller.di.AppContainer
 import magicau.mtkcontroller.domain.model.ApplyMode
 import magicau.mtkcontroller.domain.model.Backup
-import magicau.mtkcontroller.domain.model.CpuControlStyle
 import magicau.mtkcontroller.domain.model.NavBarStyle
 import magicau.mtkcontroller.domain.model.ThemeMode
 import magicau.mtkcontroller.ui.navigation.Destination
@@ -28,7 +27,6 @@ data class SettingsUiState(
     val loading: Boolean = true,
     val defaultTab: Destination = Destination.HOME,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val cpuControlStyle: CpuControlStyle = CpuControlStyle.TAP,
     val palette: AppPalette = AppPalette.SYSTEM,
     val navBarStyle: NavBarStyle = NavBarStyle.COLORFUL,
     val navBarCustomPalette: AppPalette = AppPalette.TEAL,
@@ -80,11 +78,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.settingsRepository.navBarCustomPalette.collect { name ->
                 _state.value = _state.value.copy(navBarCustomPalette = AppPalette.fromName(name))
-            }
-        }
-        viewModelScope.launch {
-            container.settingsRepository.cpuControlStyle.collect { name ->
-                _state.value = _state.value.copy(cpuControlStyle = CpuControlStyle.fromName(name))
             }
         }
         viewModelScope.launch {
@@ -143,10 +136,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             // Restart the service so the new interval takes effect immediately.
             container.syncCpuReapply()
         }
-    }
-
-    fun setCpuControlStyle(style: CpuControlStyle) {
-        viewModelScope.launch { container.settingsRepository.setCpuControlStyle(style.name) }
     }
 
     fun setLogLevel(level: LogLevel) {

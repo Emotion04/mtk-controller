@@ -31,7 +31,6 @@ class SettingsRepository(private val context: Context) {
     private val paletteKey = stringPreferencesKey("theme_palette")
     private val navBarStyleKey = stringPreferencesKey("nav_bar_style")
     private val navBarCustomKey = stringPreferencesKey("nav_bar_custom_palette")
-    private val cpuControlKey = stringPreferencesKey("cpu_control_style")
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val logLevelKey = stringPreferencesKey("log_level")
     private val applyModeKey = stringPreferencesKey("apply_mode")
@@ -56,13 +55,6 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setNavBarCustomPalette(name: String) {
         context.settingsStore.edit { it[navBarCustomKey] = name }
-    }
-
-    val cpuControlStyle: Flow<String> =
-        context.settingsStore.data.map { it[cpuControlKey] ?: "TAP" }
-
-    suspend fun setCpuControlStyle(name: String) {
-        context.settingsStore.edit { it[cpuControlKey] = name }
     }
 
     val themeMode: Flow<String> = context.settingsStore.data.map { it[themeModeKey] ?: "SYSTEM" }

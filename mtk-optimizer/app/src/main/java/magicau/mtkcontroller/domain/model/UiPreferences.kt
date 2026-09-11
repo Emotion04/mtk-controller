@@ -36,24 +36,6 @@ enum class ApplyMode(val label: String, val description: String) {
     }
 }
 
-/**
- * How the CPU screen's segment bar is driven.
- *
- * Both modes lock on a single tap; they differ in the gesture that produces a
- * range, so a user who keeps triggering ranges by accident can turn dragging off
- * entirely rather than learning to tap more carefully.
- */
-enum class CpuControlStyle(val label: String, val description: String) {
-    TAP("点击型", "点一下锁死该频率 · 再点一个值选范围"),
-    SLIDE("滑动型", "拖过的一段就是范围 · 点一下锁死"),
-    ;
-
-    companion object {
-        fun fromName(name: String?): CpuControlStyle =
-            entries.firstOrNull { it.name == name } ?: TAP
-    }
-}
-
 /** How the bottom navigation bar is coloured. */
 enum class NavBarStyle(val label: String, val description: String) {
     COLORFUL("彩色", "每个标签使用自己的颜色"),

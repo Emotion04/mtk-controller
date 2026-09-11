@@ -57,7 +57,6 @@ import magicau.mtkcontroller.ui.components.SettingsCard
 import magicau.mtkcontroller.ui.components.SettingsRow
 import magicau.mtkcontroller.data.log.LogLevel
 import magicau.mtkcontroller.domain.model.ApplyMode
-import magicau.mtkcontroller.domain.model.CpuControlStyle
 import magicau.mtkcontroller.domain.model.NavBarStyle
 import magicau.mtkcontroller.domain.model.ThemeMode
 import magicau.mtkcontroller.ui.navigation.Destination
@@ -74,7 +73,6 @@ private val NavIcon = Color(0xFF7A8FA6)
 private val LogIcon = Color(0xFF6B6B68)
 private val ReapplyIcon = Color(0xFF9C4146)
 private val BackupIcon = Color(0xFF4A6572)
-private val ControlIcon = Color(0xFF7E9179)
 private val LabIcon = Color(0xFF6A4C93)
 
 @Composable
@@ -85,7 +83,6 @@ fun SettingsScreen(
     onSetPalette: (AppPalette) -> Unit,
     onSetNavBarStyle: (NavBarStyle) -> Unit,
     onSetNavBarCustomPalette: (AppPalette) -> Unit,
-    onSetCpuControlStyle: (CpuControlStyle) -> Unit,
     onSetApplyMode: (ApplyMode) -> Unit,
     onSetReapplyInterval: (Long) -> Unit,
     onSetLogLevel: (LogLevel) -> Unit,
@@ -114,7 +111,6 @@ fun SettingsScreen(
     var themeModeExpanded by remember { mutableStateOf(false) }
     var logLevelExpanded by remember { mutableStateOf(false) }
     var applyModeExpanded by remember { mutableStateOf(false) }
-    var cpuStyleExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -294,27 +290,6 @@ fun SettingsScreen(
                 }
             }
 
-            InsetDivider()
-            SettingsRow(
-                icon = Icons.Filled.Build,
-                iconTint = ControlIcon,
-                title = "CPU 调节方式",
-                subtitle = state.cpuControlStyle.description,
-                trailingText = state.cpuControlStyle.label,
-                onClick = { cpuStyleExpanded = !cpuStyleExpanded },
-            )
-            AnimatedVisibility(visible = cpuStyleExpanded) {
-                Column(modifier = Modifier.padding(bottom = 10.dp)) {
-                    CpuControlStyle.entries.forEach { style ->
-                        OptionRow(
-                            label = style.label,
-                            detail = style.description,
-                            selected = state.cpuControlStyle == style,
-                            onClick = { onSetCpuControlStyle(style) },
-                        )
-                    }
-                }
-            }
         }
 
         SectionLabel("功能")
