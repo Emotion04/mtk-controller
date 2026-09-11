@@ -82,11 +82,31 @@ class CpuControl(
      */
     suspend fun captureBaselineIfClean(clusters: List<CpuCluster>) {
         if (store.baseline() != null) return
-        if (lock.handler() != 0) return
-        val limits = readLimits(clusters) ?: return
+        val limits = hardwareRange(clusters) ?: return
         store.setBaseline(limits)
         _status.value = _status.value.copy(baseline = limits)
-        AppLog.i(TAG, "记录初始上下限: $limits")
+        AppLog.i(TAG, "记录硬件范围: $limits")
+    }
+
+    /**
+     * `cpuinfo_min_freq`/`cpuinfo_max_freq` — the silicon's own range.
+     *
+     * The reference for "did the kernel come back" has to be something that was
+     * never ours to move. An earlier version snapshotted `scaling_min_freq` at
+     * whatever moment the screen first opened, which on an already-clamped
+     * device records the *clamped* value as normal and then never notices that
+     * releases do nothing.
+     */
+    suspend fun hardwareRange(clusters: List<CpuCluster>): String? {
+        if (clusters.isEmpty()) return null
+        val parts = clusters.mapNotNull { cluster ->
+            val dir = "${CpuScanner.CPUFREQ_ROOT}/${cluster.policy}"
+            val lo = Sysfs.read("$dir/cpuinfo_min_freq")?.toLongOrNull()
+            val hi = Sysfs.read("$dir/cpuinfo_max_freq")?.toLongOrNull()
+            if (lo == null || hi == null) null
+            else "${cluster.policy} ${lo / 1000}-${hi / 1000}MHz"
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(", ")
     }
 
     /**
@@ -157,8 +177,12 @@ class CpuControl(
         delay(SETTLE_MS)
         val after = readLimits(clusters)
         val baseline = store.baseline()
+        // A gap here is a pointer, not a verdict: the platform's own thermal and
+        // power-saving logic clamps too. What it rules out is "nothing is
+        // constraining us", which is the assumption that makes a stuck control
+        // look like a bug in this app.
         val stuck = after != null && baseline != null && after != baseline
-        if (stuck) AppLog.w(TAG, "释放后仍与初始值不同: $after(初始 $baseline)")
+        if (stuck) AppLog.w(TAG, "释放后未回到硬件范围: $after(硬件 $baseline)")
         AppLog.i(TAG, "释放后内核上下限: ${after ?: "读取失败"}")
 
         _status.value = _status.value.copy(
@@ -173,7 +197,7 @@ class CpuControl(
             message = buildString {
                 append("调频已释放")
                 after?.let { append(" · 当前 ").append(it) }
-                if (stuck) append(" · 仍与初始值不同,可能有旧的调频请求残留;重启 Shizuku 可彻底清除")
+                if (stuck) append(" · 未回到硬件范围,可能有残留请求,也可能是平台的温控/省电;见「实验室 → 只读面板 → 谁在限制」")
             },
         )
     }

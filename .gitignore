@@ -1,21 +1,11 @@
-# Build and tooling artifacts — large / regenerateable binaries
+# Build outputs
 *.apk
-*.bin
-*.dex
 *.idsig
-*.so
+
+# Keep gradle-wrapper.jar: `./gradlew` cannot run on a fresh clone without it.
+# Other jars are toolchain releases and stay out.
 *.jar
-*.zip
-*.sig
-maps.txt
-sr_names.txt
-
-# Extracted / generated output
-decomp/
-unpacked/
-
-# Local tooling (download separately)
-tools/
+!mtk-optimizer/gradle/wrapper/gradle-wrapper.jar
 
 # Android build artifacts (mtk-optimizer sub-project handles its own)
 *.iml
@@ -37,15 +27,8 @@ Thumbs.db
 # Claude Code
 .claude/
 
-# Local scratch — working files kept out of the repository.
-#
-# Anchored with a leading slash on purpose: a bare `src/` also matches
-# `mtk-optimizer/app/src/`, which silently keeps the app's own new source files
-# out of the repository.
-/_*
-/tmp/
-/g*.json
-/gh*.json
-/hdrs/
-/src/
-/s_*.xml
+# NOTE: every rule above that names a directory is anchored with a leading
+# slash for a reason. A bare `src/` also matches `mtk-optimizer/app/src/`, which
+# silently keeps the app's own new source files out of the repository while the
+# already-tracked ones keep working — so the mistake is invisible until someone
+# clones fresh.

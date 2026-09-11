@@ -1,5 +1,8 @@
 package magicau.mtkcontroller.data.lab
 
+import android.content.Context
+import android.os.BatteryManager
+import android.os.PowerManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import magicau.mtkcontroller.data.cpu.CpuScanner
@@ -48,14 +51,107 @@ object LabProbe {
     /** Uclamp groups worth showing, most to least privileged. */
     private val UCLAMP_GROUPS = listOf("top-app", "foreground", "background")
 
-    suspend fun readAll(clusters: List<CpuCluster>): List<Section> = withContext(Dispatchers.IO) {
+    suspend fun readAll(context: Context, clusters: List<CpuCluster>): List<Section> = withContext(Dispatchers.IO) {
         listOf(
+            limiterState(context, clusters),
             enforcedLimits(clusters),
             uclamp(),
             platformLimiters(),
             thermal(),
             touchBoost(),
         )
+    }
+
+    /**
+     * Who is currently constraining the CPU, and how hard.
+     *
+     * The hardware range comes from `cpuinfo_min_freq`/`cpuinfo_max_freq` — the
+     * silicon's own limits, which nothing can move. Comparing it against the
+     * live `scaling_*` range shows whether something is clamping, and by how
+     * much. That gap is invisible in every other view, and it is exactly what a
+     * "why did my settings stop working" question turns on.
+     *
+     * Note that a gap is not proof of a stale request: the platform's own
+     * thermal and power-saving logic clamps too. It is a *pointer*, and the
+     * power-save and thermal lines below say whether the vendor is the cause.
+     */
+    private suspend fun limiterState(context: Context, clusters: List<CpuCluster>): Section {
+        val power = context.getSystemService(PowerManager::class.java)
+        val battery = context.getSystemService(BatteryManager::class.java)
+
+        val readings = mutableListOf<Reading>()
+
+        clusters.forEach { cluster ->
+            val dir = "${CpuScanner.CPUFREQ_ROOT}/${cluster.policy}"
+            val hardwareMin = Sysfs.read("$dir/cpuinfo_min_freq")?.toLongOrNull()?.div(1000)
+            val hardwareMax = Sysfs.read("$dir/cpuinfo_max_freq")?.toLongOrNull()?.div(1000)
+            val liveMin = Sysfs.read("$dir/scaling_min_freq")?.toLongOrNull()?.div(1000)
+            val liveMax = Sysfs.read("$dir/scaling_max_freq")?.toLongOrNull()?.div(1000)
+
+            val gap = if (hardwareMax != null && liveMax != null) hardwareMax - liveMax else null
+            readings += Reading(
+                label = "${cluster.policy} 被压低",
+                node = "$dir/cpuinfo_max_freq vs scaling_max_freq",
+                value = when {
+                    gap == null -> null
+                    gap <= 0L -> "无(可到 ${hardwareMax}MHz)"
+                    else -> "${gap}MHz(硬件 ${hardwareMax} / 当前 ${liveMax})"
+                },
+                note = if (gap != null && gap > 0L) "有东西在限制这一簇" else null,
+            )
+            readings += Reading(
+                label = "${cluster.policy} 被抬高",
+                node = "$dir/cpuinfo_min_freq vs scaling_min_freq",
+                value = when {
+                    hardwareMin == null || liveMin == null -> null
+                    liveMin <= hardwareMin -> "无(可到 ${hardwareMin}MHz)"
+                    else -> "+${liveMin - hardwareMin}MHz(硬件 ${hardwareMin} / 当前 ${liveMin})"
+                },
+            )
+        }
+
+        power?.let {
+            readings += Reading(
+                "省电模式", "PowerManager.isPowerSaveMode",
+                if (it.isPowerSaveMode) "开 —— 系统会主动压频率" else "关",
+            )
+            readings += Reading(
+                "热状态", "PowerManager.currentThermalStatus",
+                thermalName(it.currentThermalStatus),
+            )
+        }
+
+        battery?.let {
+            val pct = it.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            readings += Reading(
+                "电池", "BatteryManager",
+                if (pct >= 0) "$pct%" + if (it.isCharging) " · 充电中" else " · 未充电" else null,
+                note = "低电量时系统与厂商省电逻辑都会主动压频率",
+            )
+        }
+
+        readings += read(
+            "PPM 软上限",
+            "$PPM/userlimit_cpu_freq",
+            note = "MTK 的 PPM 把软限制落在这里,和 scaling_* 应当一致",
+        )
+
+        return Section(
+            title = "谁在限制",
+            note = "硬件范围 vs 当前范围。差值不为零 = 有东西在压它,不一定是我们的请求",
+            readings = readings,
+        )
+    }
+
+    private fun thermalName(status: Int): String = when (status) {
+        PowerManager.THERMAL_STATUS_NONE -> "NONE · 正常"
+        PowerManager.THERMAL_STATUS_LIGHT -> "LIGHT · 轻微"
+        PowerManager.THERMAL_STATUS_MODERATE -> "MODERATE · 中度"
+        PowerManager.THERMAL_STATUS_SEVERE -> "SEVERE · 严重"
+        PowerManager.THERMAL_STATUS_CRITICAL -> "CRITICAL · 临界"
+        PowerManager.THERMAL_STATUS_EMERGENCY -> "EMERGENCY · 紧急"
+        PowerManager.THERMAL_STATUS_SHUTDOWN -> "SHUTDOWN · 即将关机"
+        else -> "未知($status)"
     }
 
     /** What the kernel is holding right now, per cluster and globally. */
