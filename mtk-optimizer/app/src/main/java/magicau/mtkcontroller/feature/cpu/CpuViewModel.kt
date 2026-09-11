@@ -16,6 +16,7 @@ import magicau.mtkcontroller.data.privilege.PrivilegeMode
 import magicau.mtkcontroller.di.AppContainer
 import magicau.mtkcontroller.domain.model.ClusterSetting
 import magicau.mtkcontroller.domain.model.CpuCluster
+import magicau.mtkcontroller.domain.model.CpuControlStyle
 import magicau.mtkcontroller.domain.model.Profile
 import java.util.UUID
 
@@ -49,6 +50,7 @@ data class CpuUiState(
     val edits: List<ClusterEdit> = emptyList(),
     val powerHal: PowerHalStatus = PowerHalStatus(),
     val activeProfileName: String? = null,
+    val controlStyle: CpuControlStyle = CpuControlStyle.TAP,
     val message: String? = null,
 )
 
@@ -58,6 +60,11 @@ class CpuViewModel(private val container: AppContainer) : ViewModel() {
     val state: StateFlow<CpuUiState> = _state.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            container.settingsRepository.cpuControlStyle.collect { name ->
+                _state.value = _state.value.copy(controlStyle = CpuControlStyle.fromName(name))
+            }
+        }
         viewModelScope.launch {
             PrivilegeManager.state.collect { refreshPowerHalStatus(it.mode, it.permissionGranted) }
         }

@@ -174,6 +174,7 @@ fun AppNavHost(container: AppContainer, modifier: Modifier = Modifier) {
                     onSetPalette = vm::setPalette,
                     onSetNavBarStyle = vm::setNavBarStyle,
                     onSetNavBarCustomPalette = vm::setNavBarCustomPalette,
+                    onSetCpuControlStyle = vm::setCpuControlStyle,
                     onSetApplyMode = vm::setApplyMode,
                     onSetReapplyInterval = vm::setReapplyIntervalMs,
                     onSetLogLevel = vm::setLogLevel,
