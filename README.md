@@ -9,10 +9,15 @@ available governors are all discovered at runtime rather than assumed.
 
 ## Status
 
-Working and in use on a Dimensity 9300+ device. Frequency limiting, release, profiles,
-backup/restore and a full device diagnostic report are implemented. Range
-(floor ≠ ceiling) support is implemented but **not yet confirmed end-to-end on hardware** —
-see [docs/handoff.md](docs/handoff.md).
+**Read [docs/handoff.md](docs/handoff.md) before doing anything with this.** It is
+split into verified facts, the complete list of open problems, and clearly-labelled
+speculation, in that order.
+
+Short version: the app installs and runs, the protocol work is done, and
+single-frequency limiting has been observed working — but frequency control
+**stops responding after several applies**, a cluster can be left **pinned with no
+in-app recovery**, and a floor/ceiling **range has never been demonstrated to take
+effect on hardware**. Those are the problems worth attention.
 
 ## Documentation
 
