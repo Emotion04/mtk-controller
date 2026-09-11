@@ -53,6 +53,8 @@ class LabController(
          */
         const val TEST_DURATION_MS = 20_000
 
+        /** Non-private so the raw test panel can share the settle timing. */
+
         /** Settlement before reading a node back, as everywhere else. */
         const val SETTLE_MS = 400L
     }
@@ -199,6 +201,59 @@ class LabController(
         if (verdict.stateEnum() == State.WORKING) AppLog.i(TAG, "[${feature.key}] ✅ ${verdict.detail}")
         else AppLog.w(TAG, "[${feature.key}] ❌ ${verdict.detail}")
         record(feature.key, verdict)
+        return verdict
+    }
+
+    /**
+     * Send an arbitrary set of CPU frequency resources and report what moved.
+     *
+     * This exists because the app has spent several rounds guessing which id
+     * does what. Every guess produced a plausible story and none survived
+     * contact with the device. Being able to send **one id at a time** and see
+     * the kernel's answer turns that into a measurement.
+     *
+     * Deliberately restricted to the CPU frequency family by the caller — a
+     * free-form id field would let a typo reach the resources that control
+     * radio power and page-cache dropping.
+     */
+    suspend fun sendRaw(
+        pairs: List<Pair<String, String>>,
+        readNodes: List<Pair<String, String>>,
+        hold: Boolean,
+    ): Verdict {
+        if (pairs.isEmpty()) return Verdict(State.NO_EFFECT.name, "没有勾选任何 ID")
+
+        val before = readAll(readNodes)
+        val duration = if (hold) 0 else TEST_DURATION_MS
+        AppLog.i(
+            TAG,
+            "[手动] 下发 " + pairs.joinToString(", ") { "${it.first}=${it.second}" } +
+                " · ${if (hold) "保持" else "${TEST_DURATION_MS / 1000}s 后失效"}",
+        )
+
+        val outcome = lock.apply(pairs, duration)
+        if (!outcome.success) {
+            val verdict = Verdict(State.NO_EFFECT.name, "下发被拒绝: ${outcome.message}")
+            AppLog.w(TAG, "[手动] ${verdict.detail}")
+            return verdict
+        }
+
+        delay(SETTLE_MS)
+        val after = readAll(readNodes)
+        val verdict = when {
+            after == null -> Verdict(State.UNKNOWN.name, "读回失败")
+            after == before -> Verdict(
+                State.NO_EFFECT.name,
+                "${pairs.size} 个 ID 全部无效 —— 节点仍是 \"$before\"",
+                System.currentTimeMillis(),
+            )
+            else -> Verdict(
+                State.WORKING.name,
+                "节点 \"$before\" → \"$after\"",
+                System.currentTimeMillis(),
+            )
+        }
+        AppLog.i(TAG, "[手动] ${verdict.stateEnum().label}: ${verdict.detail}")
         return verdict
     }
 
