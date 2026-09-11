@@ -38,14 +38,19 @@ class CpuControl(
         const val TAG = "CpuControl"
 
         /**
-         * How long to let libpowerhal settle before reading limits back.
+         * When to read the limits back after an apply or a release.
          *
-         * An acquire's commands are applied one at a time on the service side
-         * and the transaction returns before that finishes, so an immediate read
-         * catches a half-applied batch — which reads exactly like a "collapsed
-         * range" that is not actually collapsed.
+         * libpowerhal applies a command array **one entry at a time** and the
+         * transaction returns before that finishes, so a single early read
+         * cannot tell "not applied yet" from "never applied".
+         *
+         * A single 400 ms read was the previous behaviour, and it left exactly
+         * that ambiguity open: on-device logs showed a batch accepted with a
+         * valid handle whose values had not moved 400 ms later. Sampling more
+         * than once separates the two cases, and the last sample is the one
+         * reported as the result.
          */
-        const val SETTLE_MS = 400L
+        val SAMPLE_DELAYS_MS = longArrayOf(400L, 1_500L, 3_000L)
     }
 
     /** A result worth showing the user; the detail lives in [Status]. */
@@ -144,9 +149,7 @@ class CpuControl(
         store.setLastApplied(settings)
         val governorNote = applyGovernors(clusters, settings)
 
-        delay(SETTLE_MS)
-        val observed = readLimits(clusters)
-        if (observed != null) AppLog.i(TAG, "内核实际上下限: $observed")
+        val observed = sampleLimits(clusters, "应用")
 
         _status.value = _status.value.copy(
             handler = lock.handler(),
@@ -174,22 +177,26 @@ class CpuControl(
 
         store.setLastApplied(emptyList())
 
-        delay(SETTLE_MS)
-        val after = readLimits(clusters)
+        val after = sampleLimits(clusters, "释放")
+
+        // Deliberately NOT reported as a warning. The ceiling legitimately sits
+        // below the hardware maximum whenever the platform's own thermal or
+        // power-saving logic clamps — on-device readings of the same device gave
+        // 2200 MHz on one release and 2400 MHz on another with nothing of ours
+        // applied. Flagging every such gap would be noise, and calling it a
+        // stale request would be wrong. The comparison lives in the read-only
+        // panel, where the hardware range and the power/thermal state are shown
+        // side by side and the user can judge it.
         val baseline = store.baseline()
-        // A gap here is a pointer, not a verdict: the platform's own thermal and
-        // power-saving logic clamps too. What it rules out is "nothing is
-        // constraining us", which is the assumption that makes a stuck control
-        // look like a bug in this app.
-        val stuck = after != null && baseline != null && after != baseline
-        if (stuck) AppLog.w(TAG, "释放后未回到硬件范围: $after(硬件 $baseline)")
-        AppLog.i(TAG, "释放后内核上下限: ${after ?: "读取失败"}")
+        if (after != null && baseline != null && after != baseline) {
+            AppLog.i(TAG, "上限低于硬件范围: $after(硬件 $baseline)· 平台温控/省电也会造成同样结果")
+        }
 
         _status.value = _status.value.copy(
             handler = 0,
             applied = emptyList(),
             observedLimits = after,
-            releaseIncomplete = stuck,
+            releaseIncomplete = false,
         )
 
         return Outcome(
@@ -197,9 +204,30 @@ class CpuControl(
             message = buildString {
                 append("调频已释放")
                 after?.let { append(" · 当前 ").append(it) }
-                if (stuck) append(" · 未回到硬件范围,可能有残留请求,也可能是平台的温控/省电;见「实验室 → 只读面板 → 谁在限制」")
             },
         )
+    }
+
+    /**
+     * Read the limits back at several delays and return the settled reading.
+     *
+     * Every sample is logged. If they all agree, the request simply did not
+     * land; if they differ, the batch was still being applied and the earlier
+     * reading was a half-applied batch rather than a result. Without this the
+     * two are indistinguishable in a log, which is precisely how a working
+     * range was once misdiagnosed as unsupported.
+     */
+    private suspend fun sampleLimits(clusters: List<CpuCluster>, phase: String): String? {
+        var previousDelay = 0L
+        var settled: String? = null
+        for (delayMs in SAMPLE_DELAYS_MS) {
+            delay(delayMs - previousDelay)
+            previousDelay = delayMs
+            val sample = readLimits(clusters)
+            AppLog.i(TAG, "内核实际上下限($phase t+${delayMs}ms): ${sample ?: "读取失败"}")
+            settled = sample ?: settled
+        }
+        return settled
     }
 
     /**
