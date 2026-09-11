@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import magicau.mtkcontroller.BuildConfig
 
 @Composable
 fun CpuScreen(
@@ -192,6 +193,14 @@ private fun Header(state: CpuUiState) {
         Text(
             text = state.activeProfileName?.let { "当前方案:$it" } ?: "未套用方案",
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // The version sits here, not only on the log screen, because "which
+        // build am I looking at" has twice been the actual question behind a
+        // bug report and the log screen is not where anyone looks.
+        Text(
+            text = "版本 ${BuildConfig.VERSION_NAME} · 分段条:点一下锁死 / 点第二个值选范围 / 拖动选范围",
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

@@ -16,8 +16,8 @@ android {
         // actually install?" unanswerable: the system treats an equal version
         // code as the same build, so an install can quietly do nothing while
         // the old code keeps running.
-        versionCode = 5
-        versionName = "0.3.2"
+        versionCode = 6
+        versionName = "0.3.3"
     }
 
     buildTypes {
