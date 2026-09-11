@@ -13,6 +13,7 @@ import magicau.mtkcontroller.data.lab.LabCategory
 import magicau.mtkcontroller.data.lab.LabController
 import magicau.mtkcontroller.data.lab.LabFeature
 import magicau.mtkcontroller.data.powerhal.PowerHal
+import magicau.mtkcontroller.data.sysfs.Sysfs
 import magicau.mtkcontroller.di.AppContainer
 import magicau.mtkcontroller.domain.model.CpuCluster
 
@@ -70,11 +71,17 @@ class LabViewModel(private val container: AppContainer) : ViewModel() {
             val powerHalReady = PowerHal.isAvailableNow()
             val verdicts = container.labController.verdicts()
 
-            // Check every declared node once, so the UI can grey out what this
-            // device does not have instead of offering a control that cannot work.
+            // One batched read for every declared node, so the UI can grey out
+            // what this device lacks instead of offering a control that cannot
+            // work — without paying a shell spawn per feature.
+            val nodes = LabCatalog.features
+                .mapNotNull { displayNode(it, clusters) }
+                .distinct()
+            val values = Sysfs.readMany(nodes)
+
             val items = LabCatalog.features.map { feature ->
-                val node = feature.node?.takeIf { !feature.perCluster || it.contains("%s") }
-                val supported = if (node == null) null else container.labController.nodeValue(node) != null
+                val node = displayNode(feature, clusters)
+                val supported = if (node == null) null else values[node] != null
                 LabItemState(
                     feature = feature,
                     supported = supported,
@@ -92,6 +99,21 @@ class LabViewModel(private val container: AppContainer) : ViewModel() {
                     .toSortedMap(compareBy { it.order })
                     .map { (category, list) -> category to list },
             )
+        }
+    }
+
+    /**
+     * Representative node for a feature's capability check.
+     *
+     * A per-cluster template is resolved against the first cluster: existence is
+     * a property of the platform, not of one policy.
+     */
+    private fun displayNode(feature: LabFeature, clusters: List<CpuCluster>): String? {
+        val template = feature.node ?: return null
+        return if (template.contains("%s")) {
+            clusters.firstOrNull()?.let { template.replace("%s", it.policy) }
+        } else {
+            template
         }
     }
 

@@ -18,11 +18,16 @@ import magicau.mtkcontroller.domain.model.CpuCluster
  *
  * Read-only by construction: nothing here writes.
  *
- * Node paths are taken from primary sources, but they are **not portable** —
- * MediaTek moves ids and node names between BSP revisions (see
- * `docs/protocol.md` §12). A missing node is therefore normal and is reported
- * as such rather than treated as an error; the presence or absence of the node
- * is itself the capability answer.
+ * **All nodes are fetched in one batched call.** Reading them one at a time,
+ * each with its own elevated fallback, spawns a shell process per unreadable
+ * node — and on a device that lacks most of what we probe, that is dozens of
+ * spawns per visit, expensive enough to show up as stutter across the whole
+ * system.
+ *
+ * Node paths come from primary sources but are **not portable** — MediaTek moves
+ * ids and node names between BSP revisions (see `docs/protocol.md` §11). A
+ * missing node is therefore normal and reported as such; its presence is itself
+ * the capability answer.
  */
 object LabProbe {
 
@@ -51,15 +56,49 @@ object LabProbe {
     /** Uclamp groups worth showing, most to least privileged. */
     private val UCLAMP_GROUPS = listOf("top-app", "foreground", "background")
 
-    suspend fun readAll(context: Context, clusters: List<CpuCluster>): List<Section> = withContext(Dispatchers.IO) {
-        listOf(
-            limiterState(context, clusters),
-            enforcedLimits(clusters),
-            uclamp(),
-            platformLimiters(),
-            thermal(),
-            touchBoost(),
-        )
+    private fun freqDir(policy: String) = "${CpuScanner.CPUFREQ_ROOT}/$policy"
+
+    suspend fun readAll(context: Context, clusters: List<CpuCluster>): List<Section> =
+        withContext(Dispatchers.IO) {
+            // One batch, then every section is built from the resulting map.
+            val values = Sysfs.readMany(allPaths(clusters))
+            fun value(path: String) = values[path]
+
+            listOf(
+                limiterState(context, clusters, ::value),
+                enforcedLimits(clusters, ::value),
+                uclamp(::value),
+                platformLimiters(::value),
+                thermal(::value),
+                touchBoost(::value),
+            )
+        }
+
+    /** Every node any section reads. Kept beside the readers so they stay in step. */
+    private fun allPaths(clusters: List<CpuCluster>): List<String> = buildList {
+        clusters.forEach { c ->
+            val dir = freqDir(c.policy)
+            add("$dir/cpuinfo_min_freq")
+            add("$dir/cpuinfo_max_freq")
+            add("$dir/scaling_min_freq")
+            add("$dir/scaling_max_freq")
+            add("$dir/scaling_cur_freq")
+        }
+        add("$PPM/hard_userlimit_cpu_freq")
+        add("$PPM/userlimit_cpu_freq")
+        add("$PPM/thermal_limit")
+        add("$PPM/thermal_cur_power")
+        add("$PERFMGR/thermal_policy")
+        add("$PERFMGR/syslimiter/syslimiter_limit_freq")
+        add("$PERFMGR/boost_ctrl/cpu_ctrl/cpu_ctrl_enable")
+        add("$PERFMGR/tchbst/user/usrtch")
+        add("/proc/cpufreq/cpufreq_cci_mode")
+        UCLAMP_GROUPS.forEach { group ->
+            add("$CPUCTL/$group/cpu.uclamp.min")
+            add("$CPUCTL/$group/cpu.uclamp.max")
+        }
+        add("$FPSGO/limit_cfreq")
+        add("$FPSGO/limit_rfreq")
     }
 
     /**
@@ -68,77 +107,85 @@ object LabProbe {
      * The hardware range comes from `cpuinfo_min_freq`/`cpuinfo_max_freq` — the
      * silicon's own limits, which nothing can move. Comparing it against the
      * live `scaling_*` range shows whether something is clamping, and by how
-     * much. That gap is invisible in every other view, and it is exactly what a
-     * "why did my settings stop working" question turns on.
+     * much, which is the question a "my settings stopped working" report turns
+     * on.
      *
-     * Note that a gap is not proof of a stale request: the platform's own
-     * thermal and power-saving logic clamps too. It is a *pointer*, and the
-     * power-save and thermal lines below say whether the vendor is the cause.
+     * A gap is **not** proof of a stale request. The platform's own thermal and
+     * power-saving logic clamps too, and on the development device two releases
+     * of the same build read back 2200 MHz and 2400 MHz with nothing of ours
+     * applied. That is why the power-save, thermal and battery lines sit in the
+     * same section: they are what tells the two causes apart.
      */
-    private suspend fun limiterState(context: Context, clusters: List<CpuCluster>): Section {
-        val power = context.getSystemService(PowerManager::class.java)
-        val battery = context.getSystemService(BatteryManager::class.java)
-
+    private fun limiterState(
+        context: Context,
+        clusters: List<CpuCluster>,
+        value: (String) -> String?,
+    ): Section {
         val readings = mutableListOf<Reading>()
 
         clusters.forEach { cluster ->
-            val dir = "${CpuScanner.CPUFREQ_ROOT}/${cluster.policy}"
-            val hardwareMin = Sysfs.read("$dir/cpuinfo_min_freq")?.toLongOrNull()?.div(1000)
-            val hardwareMax = Sysfs.read("$dir/cpuinfo_max_freq")?.toLongOrNull()?.div(1000)
-            val liveMin = Sysfs.read("$dir/scaling_min_freq")?.toLongOrNull()?.div(1000)
-            val liveMax = Sysfs.read("$dir/scaling_max_freq")?.toLongOrNull()?.div(1000)
+            val dir = freqDir(cluster.policy)
+            val hardwareMax = value("$dir/cpuinfo_max_freq")?.tooLong()?.div(1000)
+            val liveMax = value("$dir/scaling_max_freq")?.tooLong()?.div(1000)
+            val hardwareMin = value("$dir/cpuinfo_min_freq")?.tooLong()?.div(1000)
+            val liveMin = value("$dir/scaling_min_freq")?.tooLong()?.div(1000)
 
-            val gap = if (hardwareMax != null && liveMax != null) hardwareMax - liveMax else null
+            val drop = if (hardwareMax != null && liveMax != null) hardwareMax - liveMax else null
             readings += Reading(
-                label = "${cluster.policy} 被压低",
-                node = "$dir/cpuinfo_max_freq vs scaling_max_freq",
+                label = "${cluster.policy} 上限被压低",
+                node = "$dir/cpuinfo_max_freq  vs  scaling_max_freq",
                 value = when {
-                    gap == null -> null
-                    gap <= 0L -> "无(可到 ${hardwareMax}MHz)"
-                    else -> "${gap}MHz(硬件 ${hardwareMax} / 当前 ${liveMax})"
+                    drop == null -> null
+                    drop <= 0L -> "无(可到 ${hardwareMax}MHz)"
+                    else -> "${drop}MHz(硬件 ${hardwareMax} / 当前 ${liveMax})"
                 },
-                note = if (gap != null && gap > 0L) "有东西在限制这一簇" else null,
+                note = if (drop != null && drop > 0L) "上限低于硬件 —— 有东西在压它" else null,
             )
+
+            val lift = if (hardwareMin != null && liveMin != null) liveMin - hardwareMin else null
             readings += Reading(
-                label = "${cluster.policy} 被抬高",
-                node = "$dir/cpuinfo_min_freq vs scaling_min_freq",
+                label = "${cluster.policy} 下限被抬高",
+                node = "$dir/cpuinfo_min_freq  vs  scaling_min_freq",
                 value = when {
-                    hardwareMin == null || liveMin == null -> null
-                    liveMin <= hardwareMin -> "无(可到 ${hardwareMin}MHz)"
-                    else -> "+${liveMin - hardwareMin}MHz(硬件 ${hardwareMin} / 当前 ${liveMin})"
+                    lift == null -> null
+                    lift <= 0L -> "无(可到 ${hardwareMin}MHz)"
+                    else -> "+${lift}MHz(硬件 ${hardwareMin} / 当前 ${liveMin})"
                 },
+                note = if (lift != null && lift > 0L) "下限高于硬件 —— 有东西钉着它" else null,
             )
         }
 
-        power?.let {
+        context.getSystemService(PowerManager::class.java)?.let { power ->
             readings += Reading(
                 "省电模式", "PowerManager.isPowerSaveMode",
-                if (it.isPowerSaveMode) "开 —— 系统会主动压频率" else "关",
+                if (power.isPowerSaveMode) "开 —— 系统会主动压频率" else "关",
             )
             readings += Reading(
                 "热状态", "PowerManager.currentThermalStatus",
-                thermalName(it.currentThermalStatus),
+                thermalName(power.currentThermalStatus),
             )
         }
 
-        battery?.let {
-            val pct = it.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            readings += Reading(
-                "电池", "BatteryManager",
-                if (pct >= 0) "$pct%" + if (it.isCharging) " · 充电中" else " · 未充电" else null,
-                note = "低电量时系统与厂商省电逻辑都会主动压频率",
-            )
+        context.getSystemService(BatteryManager::class.java)?.let { battery ->
+            val pct = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            if (pct >= 0) {
+                readings += Reading(
+                    "电池", "BatteryManager",
+                    "$pct%" + if (battery.isCharging) " · 充电中" else " · 未充电",
+                    note = "低电量时系统和厂商的省电逻辑都会压频率",
+                )
+            }
         }
 
-        readings += read(
-            "PPM 软上限",
-            "$PPM/userlimit_cpu_freq",
-            note = "MTK 的 PPM 把软限制落在这里,和 scaling_* 应当一致",
+        readings += Reading(
+            "PPM 软上限", "$PPM/userlimit_cpu_freq",
+            value("$PPM/userlimit_cpu_freq"),
+            note = "MTK 的 PPM 把软限制落在这里,应与 scaling_* 一致",
         )
 
         return Section(
             title = "谁在限制",
-            note = "硬件范围 vs 当前范围。差值不为零 = 有东西在压它,不一定是我们的请求",
+            note = "硬件范围 vs 当前范围。差值不为零 = 有东西在压,不一定是我们的请求",
             readings = readings,
         )
     }
@@ -155,28 +202,19 @@ object LabProbe {
     }
 
     /** What the kernel is holding right now, per cluster and globally. */
-    private suspend fun enforcedLimits(clusters: List<CpuCluster>): Section {
+    private fun enforcedLimits(clusters: List<CpuCluster>, value: (String) -> String?): Section {
         val readings = mutableListOf<Reading>()
-
         clusters.forEach { cluster ->
-            val dir = "${CpuScanner.CPUFREQ_ROOT}/${cluster.policy}"
-            readings += read("${cluster.policy} 下限", "$dir/scaling_min_freq").let {
-                it.copy(value = it.value?.freqToMhz())
-            }
-            readings += read("${cluster.policy} 上限", "$dir/scaling_max_freq").let {
-                it.copy(value = it.value?.freqToMhz())
-            }
-            readings += read("${cluster.policy} 当前", "$dir/scaling_cur_freq").let {
-                it.copy(value = it.value?.freqToMhz())
-            }
+            val dir = freqDir(cluster.policy)
+            readings += freqReading("${cluster.policy} 下限", "$dir/scaling_min_freq", value)
+            readings += freqReading("${cluster.policy} 上限", "$dir/scaling_max_freq", value)
+            readings += freqReading("${cluster.policy} 当前", "$dir/scaling_cur_freq", value)
         }
-
-        readings += read(
-            "硬限制 (全局)",
-            "$PPM/hard_userlimit_cpu_freq",
-            note = "这一行有值就说明有客户端写了硬限制,它优先于软上下限",
+        readings += Reading(
+            "硬限制 (全局)", "$PPM/hard_userlimit_cpu_freq",
+            value("$PPM/hard_userlimit_cpu_freq"),
+            note = "有值就说明有客户端写了硬限制;节点不存在时这类写入是空操作",
         )
-
         return Section(
             title = "当前生效的限制",
             note = "内核实际在执行的,不是我们请求的",
@@ -187,63 +225,56 @@ object LabProbe {
     /**
      * Scheduler utilization clamping, per task group.
      *
-     * This is the modern responsiveness knob: raising `top-app`'s minimum makes
-     * the scheduler treat the focused app as heavier, which lifts both the
-     * frequency it picks and how readily it uses the big cores.
+     * The modern responsiveness knob: raising `top-app`'s minimum makes the
+     * scheduler treat the focused app as heavier, lifting both the frequency it
+     * picks and how readily it uses the big cores.
      */
-    private suspend fun uclamp(): Section {
-        val readings = UCLAMP_GROUPS.flatMap { group ->
+    private fun uclamp(value: (String) -> String?): Section = Section(
+        title = "调度 (uclamp)",
+        note = "0-100。作用于整个任务组,不是单个应用",
+        readings = UCLAMP_GROUPS.flatMap { group ->
             listOf(
-                read("$group · 下限", "$CPUCTL/$group/cpu.uclamp.min"),
-                read("$group · 上限", "$CPUCTL/$group/cpu.uclamp.max"),
+                Reading("$group · 下限", "$CPUCTL/$group/cpu.uclamp.min", value("$CPUCTL/$group/cpu.uclamp.min")),
+                Reading("$group · 上限", "$CPUCTL/$group/cpu.uclamp.max", value("$CPUCTL/$group/cpu.uclamp.max")),
             )
-        }
-        return Section(
-            title = "调度 (uclamp)",
-            note = "0-100。下限抬高调度器对这个任务组的负载估计。作用于整组,不是单个应用",
-            readings = readings,
-        )
-    }
+        },
+    )
 
-    private suspend fun platformLimiters(): Section = Section(
+    private fun platformLimiters(value: (String) -> String?): Section = Section(
         title = "平台限制器",
-        note = "厂商自己的总频率上限,叠在我们的限制之上",
+        note = "厂商自己的上限,叠在我们的限制之上",
         readings = listOf(
-            read("系统总频率上限", "$PERFMGR/syslimiter/syslimiter_limit_freq"),
-            read("Boost 控制", "$PERFMGR/boost_ctrl/cpu_ctrl/cpu_ctrl_enable"),
-            read("FPSGO 帧率上限", "$FPSGO/limit_cfreq"),
-            read("FPSGO 帧率下限", "$FPSGO/limit_rfreq"),
+            Reading("系统总频率上限", "$PERFMGR/syslimiter/syslimiter_limit_freq", value("$PERFMGR/syslimiter/syslimiter_limit_freq")),
+            Reading("Boost 控制", "$PERFMGR/boost_ctrl/cpu_ctrl/cpu_ctrl_enable", value("$PERFMGR/boost_ctrl/cpu_ctrl/cpu_ctrl_enable")),
+            Reading("FPSGO 帧率上限", "$FPSGO/limit_cfreq", value("$FPSGO/limit_cfreq")),
+            Reading("FPSGO 帧率下限", "$FPSGO/limit_rfreq", value("$FPSGO/limit_rfreq")),
         ),
     )
 
-    private suspend fun thermal(): Section = Section(
+    private fun thermal(value: (String) -> String?): Section = Section(
         title = "温控",
-        note = "只有读;写温控策略需要替换加密的厂商策略文件,本应用不做",
+        note = "只读;写温控策略需要替换加密的厂商策略文件,本应用不做",
         readings = listOf(
-            read("温控频率上限", "$PPM/thermal_limit"),
-            read("当前热功耗", "$PPM/thermal_cur_power"),
-            read("温控策略索引", "$PERFMGR/thermal_policy"),
+            Reading("温控频率上限", "$PPM/thermal_limit", value("$PPM/thermal_limit")),
+            Reading("当前热功耗", "$PPM/thermal_cur_power", value("$PPM/thermal_cur_power")),
+            Reading("温控策略索引", "$PERFMGR/thermal_policy", value("$PERFMGR/thermal_policy")),
         ),
     )
 
-    private suspend fun touchBoost(): Section = Section(
+    private fun touchBoost(value: (String) -> String?): Section = Section(
         title = "触控加速",
         note = "共享节点,MTK 自己也在写",
         readings = listOf(
-            read("触控加速状态", "$PERFMGR/tchbst/user/usrtch"),
+            Reading("触控加速状态", "$PERFMGR/tchbst/user/usrtch", value("$PERFMGR/tchbst/user/usrtch")),
+            Reading("CCI 模式", "/proc/cpufreq/cpufreq_cci_mode", value("/proc/cpufreq/cpufreq_cci_mode")),
         ),
     )
 
-    /**
-     * Read one node: direct first, then through the elevated shell, because
-     * some of these are root-private and a plain app-side open returns nothing.
-     */
-    private suspend fun read(label: String, node: String, note: String? = null): Reading {
-        val value = Sysfs.read(node) ?: Sysfs.readElevated(node)
-        return Reading(label = label, node = node, value = value, note = note)
+    private fun freqReading(label: String, node: String, value: (String) -> String?): Reading {
+        val raw = value(node)
+        return Reading(label, node, raw?.let { "${it.tooLong()?.div(1000) ?: it} MHz" })
     }
 
-    /** These nodes report kHz; show MHz the way the rest of the app does. */
-    private fun String.freqToMhz(): String =
-        trim().toLongOrNull()?.let { "${it / 1000} MHz" } ?: trim()
+    /** These nodes report kHz; parse without throwing on anything unexpected. */
+    private fun String.tooLong(): Long? = trim().toLongOrNull()
 }

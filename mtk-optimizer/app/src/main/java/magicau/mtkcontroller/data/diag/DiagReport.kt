@@ -1,6 +1,7 @@
 package magicau.mtkcontroller.data.diag
 
 import android.os.Build
+import magicau.mtkcontroller.data.lab.LabProbe
 import magicau.mtkcontroller.data.log.LogEntry
 import magicau.mtkcontroller.data.powerhal.PowerHal
 import java.text.SimpleDateFormat
@@ -19,7 +20,11 @@ import java.util.Locale
  */
 object DiagReport {
 
-    fun build(report: CapabilityReport?, entries: List<LogEntry>): String = buildString {
+    fun build(
+        report: CapabilityReport?,
+        entries: List<LogEntry>,
+        sections: List<LabProbe.Section> = emptyList(),
+    ): String = buildString {
         appendLine("# MTK God 诊断报告")
         appendLine("# 生成时间: ${timestamp(System.currentTimeMillis())}")
         appendLine("# 把整份内容发回即可用于适配本机型")
@@ -87,6 +92,18 @@ object DiagReport {
             report.checks.forEach { check ->
                 appendLine("[${if (check.ok) "OK " else "NG "}] ${check.category.title} / ${check.label}")
                 check.detail.lineSequence().forEach { appendLine("        $it") }
+            }
+            appendLine()
+        }
+
+        if (sections.isNotEmpty()) {
+            section("谁在限制")
+            sections.forEach { s ->
+                appendLine("-- ${s.title}")
+                s.readings.forEach { r ->
+                    appendLine("${r.label} = ${r.value ?: "(不存在)"}")
+                    appendLine("    node: ${r.node}")
+                }
             }
             appendLine()
         }
