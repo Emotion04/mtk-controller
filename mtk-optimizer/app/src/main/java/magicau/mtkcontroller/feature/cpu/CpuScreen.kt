@@ -45,7 +45,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import magicau.mtkcontroller.domain.model.CpuControlStyle
 
 @Composable
 fun CpuScreen(
@@ -111,7 +110,6 @@ fun CpuScreen(
         ) { index, edit ->
             ClusterCard(
                 edit = edit,
-                style = state.controlStyle,
                 enabled = !state.busy,
                 onRange = { lo, hi -> onRange(index, lo, hi) },
             )
@@ -302,7 +300,6 @@ private fun GovernorSection(
 @Composable
 private fun ClusterCard(
     edit: ClusterEdit,
-    style: CpuControlStyle,
     enabled: Boolean,
     onRange: (Int, Int) -> Unit,
 ) {
@@ -341,7 +338,6 @@ private fun ClusterCard(
                 count = freqs.size,
                 minIndex = edit.minIndex,
                 maxIndex = edit.maxIndex,
-                style = style,
                 enabled = enabled,
                 onRange = onRange,
             )
@@ -432,7 +428,6 @@ private fun SegmentBar(
     count: Int,
     minIndex: Int,
     maxIndex: Int,
-    style: CpuControlStyle,
     enabled: Boolean,
     onRange: (Int, Int) -> Unit,
 ) {
@@ -474,10 +469,7 @@ private fun SegmentBar(
                             }
                         }
                     }
-                    .pointerInput(count, widthPx, style) {
-                        // Dragging is only installed in slide mode: a user who keeps
-                        // producing ranges by accident can turn the gesture off.
-                        if (style != CpuControlStyle.SLIDE) return@pointerInput
+                    .pointerInput(count, widthPx) {
                         detectHorizontalDragGestures(
                             onDragStart = { offset ->
                                 val i = indexAt(offset.x)
