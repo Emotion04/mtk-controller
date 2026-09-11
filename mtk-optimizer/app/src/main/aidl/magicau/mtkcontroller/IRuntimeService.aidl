@@ -14,4 +14,14 @@ interface IRuntimeService {
 
     /** uid the service is running as: 0 = root, 2000 = shell. */
     int getUid();
+
+    /**
+     * Run a PowerHAL acquire from this UserService process. Keeping both this
+     * and release here makes the process that owns a PowerHAL request stable
+     * across activity and app-process recreation.
+     */
+    int powerHalAcquire(in int[] commands, int durationMs);
+
+    /** Queue release of a handle previously acquired by this UserService. */
+    boolean powerHalRelease(int handler);
 }

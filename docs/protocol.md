@@ -124,6 +124,11 @@ with `MAX_CLUSTER_0=3000000`).
 
 ## 5. Other resource families
 
+> This is the short list — what the app could plausibly use. The **full namespace**,
+> 172 entries across 15 areas with a status marker on each, is in
+> [powerhal-resources.md](powerhal-resources.md). Consult that before concluding
+> that a resource does not exist; consult *this* section before using one.
+
 Confirmed ids unless marked otherwise.
 
 | id base | resource | notes |
@@ -265,3 +270,8 @@ and treat an unfamiliar device as a fresh problem.
   min/max usage, and the `PERF_RES_CPUFREQ_{MIN,MAX}_CLUSTER_n` naming.
 - A public decompiled vendor framework's `IPowerHalMgr.java` — the transaction constant table
   used in section 2.
+
+**Full list with links: [powerhal-resources.md § Sources](powerhal-resources.md#sources)** —
+141 references, including the MediaTek open-source kernel drops, vendor powerhint
+and scentbl tables, Android's `Binder`/`IBinder`/AIDL sources, and the sepolicy
+rules cited in §8.

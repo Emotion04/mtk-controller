@@ -194,4 +194,18 @@ object PrivilegeManager {
         val service = remote ?: return@withContext null
         runCatching { service.uid }.getOrNull()
     }
+
+    /** PowerHAL calls are executed by the stable daemon UserService. */
+    suspend fun powerHalAcquire(commands: IntArray, durationMs: Int): Int? = withContext(Dispatchers.IO) {
+        if (!awaitRemote()) return@withContext null
+        val service = remote ?: return@withContext null
+        runCatching { service.powerHalAcquire(commands, durationMs) }.getOrNull()
+    }
+
+    /** Queue release through the same UserService that acquired the handle. */
+    suspend fun powerHalRelease(handler: Int): Boolean? = withContext(Dispatchers.IO) {
+        if (!awaitRemote()) return@withContext null
+        val service = remote ?: return@withContext null
+        runCatching { service.powerHalRelease(handler) }.getOrNull()
+    }
 }

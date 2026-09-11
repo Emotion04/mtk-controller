@@ -223,11 +223,19 @@ class CpuControl(
             val floor = minOf(low, high)
             val ceiling = maxOf(low, high)
 
-            // Soft floor and ceiling only. The hard-limit pair is a separate
-            // mechanism — setting both halves to one value hard-locks the
-            // cluster — so it is left to the platform's thermal policy.
+            // A range is the documented soft floor/ceiling pair. A single
+            // point has different semantics: match the reference app and
+            // include both hard-limit ids, which pins the policy at that
+            // available frequency instead of merely giving it a soft floor.
             pairs += PowerHal.commandId(PowerHal.BASE_MIN, cluster.index) to floor.toString()
             pairs += PowerHal.commandId(PowerHal.BASE_MAX, cluster.index) to ceiling.toString()
+            if (floor == ceiling) {
+                pairs += PowerHal.commandId(PowerHal.BASE_HARD_MIN, cluster.index) to floor.toString()
+                pairs += PowerHal.commandId(PowerHal.BASE_HARD_MAX, cluster.index) to ceiling.toString()
+                AppLog.i(TAG, "${cluster.policy} 单值锁频 ${floor / 1000}MHz（软+硬限制）")
+            } else {
+                AppLog.i(TAG, "${cluster.policy} 频率范围 ${floor / 1000}-${ceiling / 1000}MHz（软限制）")
+            }
         }
         if (pairs.isEmpty()) return Outcome(false, "没有匹配到可用的簇")
 

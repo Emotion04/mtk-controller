@@ -4,6 +4,7 @@ import android.os.IBinder
 import android.os.Parcel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import magicau.mtkcontroller.data.privilege.PrivilegeManager
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
 
@@ -144,34 +145,11 @@ object PowerHal {
         if (pairs.isEmpty() || pairs.size % 2 != 0) {
             return@withContext Result.Failure("命令数组必须成对且非空")
         }
-        val target = binder() ?: return@withContext Result.Failure("未获取到 PowerHAL 服务")
-
         val commands = pairs.flatMap { listOf(it.first, it.second) }.map { it.toIntValue() }
-
-        val data = Parcel.obtain()
-        val reply = Parcel.obtain()
-        try {
-            data.writeInterfaceToken(INTERFACE_TOKEN)
-            data.writeInt(0)              // handle slot
-            data.writeInt(durationMs)     // 0 = never expires
-            data.writeIntArray(commands.toIntArray())
-
-            val ok = target.transact(TRANSACT_ACQUIRE, data, reply, 0)
-            if (!ok) return@withContext Result.Failure("PowerHAL 调频请求失败")
-
-            reply.readException()
-            val handler = reply.readInt()
-            if (handler > 0) {
-                Result.Success(handler, "调频已应用")
-            } else {
-                Result.Failure("PowerHAL 返回无效句柄: $handler")
-            }
-        } catch (t: Throwable) {
-            Result.Failure("PowerHAL 调用异常: ${t.javaClass.simpleName}: ${t.message}")
-        } finally {
-            data.recycle()
-            reply.recycle()
-        }
+        val handler = PrivilegeManager.powerHalAcquire(commands.toIntArray(), durationMs)
+            ?: return@withContext Result.Failure("提权服务未连接，无法下发 PowerHAL 请求")
+        if (handler > 0) Result.Success(handler, "调频已应用")
+        else Result.Failure("PowerHAL 返回无效句柄: $handler")
     }
 
     /**
@@ -184,18 +162,10 @@ object PowerHal {
      */
     suspend fun release(handler: Int): Result = withContext(Dispatchers.IO) {
         if (handler <= 0) return@withContext Result.Failure("没有可释放的请求")
-        val target = binder() ?: return@withContext Result.Failure("未获取到 PowerHAL 服务")
-
-        val data = Parcel.obtain()
-        try {
-            data.writeInterfaceToken(INTERFACE_TOKEN)
-            data.writeInt(handler)
-            val ok = target.transact(TRANSACT_RELEASE, data, null, IBinder.FLAG_ONEWAY)
-            if (ok) Result.Success(0, "调频已释放") else Result.Failure("调频释放请求失败")
-        } catch (t: Throwable) {
-            Result.Failure("PowerHAL 调用异常: ${t.javaClass.simpleName}: ${t.message}")
-        } finally {
-            data.recycle()
+        when (PrivilegeManager.powerHalRelease(handler)) {
+            true -> Result.Success(0, "调频已释放")
+            false -> Result.Failure("调频释放请求失败")
+            null -> Result.Failure("提权服务未连接，无法释放 PowerHAL 请求")
         }
     }
 

@@ -226,14 +226,20 @@ A read-only detection scheme is designed in
 implemented**. The descriptor probe (`PowerHal.descriptor`) is implemented and is
 the zero-side-effect way to identify the binder first.
 
-## P9 — Requests are issued by Shizuku, not by this app 🟠
+## P9 — Requests must retain a stable owner 🟠
 
-`ShizukuBinderWrapper` routes the transaction through Shizuku's process, so MTK
-sees **Shizuku** as the client. The app cannot attribute requests to itself and
-cannot clean up after itself.
+The prior implementation sent PowerHAL transactions through
+`ShizukuBinderWrapper`, so MTK saw **Shizuku** as the client. That made the
+request owner shared and made handle cleanup vulnerable to a Shizuku process
+restart.
 
-Moving the `transact` into `RuntimeUserService` (the app's own elevated process)
-would make the app the client. **Not started.**
+**Implemented in 0.3.5, not yet verified on device:** acquire and release now
+run inside the app's daemon `RuntimeUserService`, matching the reference app's
+shape. `PowerHal` reaches it through `IRuntimeService`; the elevated service
+resolves `power_hal_mgr_service` and performs both binder transactions. The
+returned handle therefore belongs to one stable UserService process and is
+released from that same process. Check the runtime-service uid in the diagnostic
+report and verify repeated apply/release cycles with an external monitor.
 
 ## P10 — The app cannot read the frequency limits on this device 🔴
 
@@ -308,6 +314,18 @@ process spawns per screen visit. That is now a single batched call
 
 `CpuReapplyService` calls `CpuControl.apply` on a timer. It has never been run
 against a device already holding stale requests.
+
+## P16 — 0.3.5 single-value and range paths need hardware verification 🟠
+
+The reference app's smali was rechecked. Its one-point control submits all four
+per-policy resources (`MIN`, `MAX`, `MIN_HL`, `MAX_HL`) with the same kHz value;
+the old app path was not the same as this app's soft-only pair.
+
+**Implemented in 0.3.5, not yet verified on device:** equal endpoints now send
+that same four-resource request, so one tap on the segment control is a genuine
+single-value lock. Unequal endpoints deliberately send only the soft `MIN` and
+`MAX` pair, preserving a range rather than accidentally turning it into a hard
+lock. The log names the selected path and its exact endpoints.
 
 ---
 
