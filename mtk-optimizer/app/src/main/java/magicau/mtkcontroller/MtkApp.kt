@@ -33,6 +33,9 @@ class MtkApp : Application() {
         }
         // Restore the CPU control bookkeeping before any screen can act on it.
         appScope.launch { container.cpuControl.load() }
-        AppLog.i("App", "MTK God 启动")
+        AppLog.i(
+            "App",
+            "MTK God ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) 启动",
+        )
     }
 }

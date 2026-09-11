@@ -1,6 +1,7 @@
 package magicau.mtkcontroller.data.diag
 
 import android.os.Build
+import magicau.mtkcontroller.BuildConfig
 import magicau.mtkcontroller.data.lab.LabProbe
 import magicau.mtkcontroller.data.log.LogEntry
 import magicau.mtkcontroller.data.powerhal.PowerHal
@@ -43,6 +44,7 @@ object DiagReport {
         appendLine()
 
         section("应用")
+        appendLine("version      : ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})")
         appendLine("interface    : ${PowerHal.INTERFACE_TOKEN}")
         appendLine("service      : ${PowerHal.SERVICE_NAME}")
         appendLine()
