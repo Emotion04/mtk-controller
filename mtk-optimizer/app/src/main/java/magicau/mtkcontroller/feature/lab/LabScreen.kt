@@ -58,6 +58,7 @@ private val StateNeutral = Color(0xFF6B6B68)
 fun LabScreen(
     state: LabUiState,
     onOpenPanel: () -> Unit,
+    onOpenRawTest: () -> Unit,
     onValueChange: (LabFeature, String, Int) -> Unit,
     onHoldChange: (LabFeature, Boolean) -> Unit,
     onTest: (LabFeature) -> Unit,
@@ -99,9 +100,10 @@ fun LabScreen(
                     OutlinedButton(onClick = onOpenPanel, modifier = Modifier.weight(1f)) {
                         Text("只读面板")
                     }
-                    OutlinedButton(onClick = onResetAll, modifier = Modifier.weight(1f)) {
-                        Text("恢复全部")
+                    OutlinedButton(onClick = onOpenRawTest, modifier = Modifier.weight(1f)) {
+                        Text("逐 ID 测试")
                     }
+                    OutlinedButton(onClick = onResetAll) { Text("恢复") }
                 }
                 state.message?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall)

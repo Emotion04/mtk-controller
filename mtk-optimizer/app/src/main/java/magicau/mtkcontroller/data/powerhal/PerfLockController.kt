@@ -1,5 +1,6 @@
 package magicau.mtkcontroller.data.powerhal
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import magicau.mtkcontroller.data.log.AppLog
@@ -30,6 +31,14 @@ class PerfLockController(
 
     private companion object {
         const val TAG = "PerfLock"
+
+        /**
+         * Gap between a oneway release and the acquire that follows it.
+         *
+         * Oneway and synchronous binder transactions to the same target are not
+         * guaranteed to be processed in submission order.
+         */
+        const val RELEASE_SETTLE_MS = 200L
     }
 
     data class Outcome(val success: Boolean, val message: String)
@@ -59,6 +68,13 @@ class PerfLockController(
             }
             store.set(name, 0)
             AppLog.i(TAG, "[$name] 已释放旧请求 handler=$previous")
+
+            // `perfLockRelease` is a ONEWAY transaction, so it is queued rather
+            // than completed. A synchronous acquire issued immediately after can
+            // be delivered ahead of it, which would leave the newly created
+            // request to be released by the release that was meant for the old
+            // one. Waiting makes the order explicit instead of assumed.
+            delay(RELEASE_SETTLE_MS)
         }
 
         AppLog.i(

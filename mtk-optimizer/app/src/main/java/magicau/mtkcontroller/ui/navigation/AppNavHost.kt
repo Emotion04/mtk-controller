@@ -40,6 +40,8 @@ import magicau.mtkcontroller.feature.lab.LabPanelScreen
 import magicau.mtkcontroller.feature.lab.LabPanelViewModel
 import magicau.mtkcontroller.feature.lab.LabScreen
 import magicau.mtkcontroller.feature.lab.LabViewModel
+import magicau.mtkcontroller.feature.lab.RawTestScreen
+import magicau.mtkcontroller.feature.lab.RawTestViewModel
 import magicau.mtkcontroller.feature.notifications.NotificationScreen
 import magicau.mtkcontroller.feature.profile.ProfileScreen
 import magicau.mtkcontroller.feature.profile.ProfileViewModel
@@ -239,11 +241,29 @@ fun AppNavHost(container: AppContainer, modifier: Modifier = Modifier) {
                     LabScreen(
                         state = state,
                         onOpenPanel = { navController.navigate(SubRoutes.LAB_PANEL) },
+                        onOpenRawTest = { navController.navigate(SubRoutes.LAB_RAW) },
                         onValueChange = vm::setValue,
                         onHoldChange = vm::setHold,
                         onTest = vm::test,
                         onResetAll = vm::resetAll,
                         onClearObservations = vm::clearObservations,
+                    )
+                }
+            }
+
+            composable(SubRoutes.LAB_RAW) {
+                val vm: RawTestViewModel = viewModel(
+                    factory = containerViewModelFactory { RawTestViewModel(container) },
+                )
+                val state by vm.state.collectAsStateWithLifecycle()
+                SubScreenScaffold("逐 ID 测试", onBack = navController::popBackStack) {
+                    RawTestScreen(
+                        state = state,
+                        onPolicy = vm::setPolicy,
+                        onRow = vm::setRow,
+                        onHold = vm::setHold,
+                        onSend = vm::send,
+                        onReset = vm::reset,
                     )
                 }
             }

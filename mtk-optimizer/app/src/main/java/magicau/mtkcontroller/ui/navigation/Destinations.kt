@@ -43,4 +43,5 @@ object SubRoutes {
     const val LOGS = "settings/logs"
     const val LAB = "settings/lab"
     const val LAB_PANEL = "settings/lab/panel"
+    const val LAB_RAW = "settings/lab/raw"
 }
