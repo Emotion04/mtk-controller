@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import magicau.mtkcontroller.BuildConfig
 import magicau.mtkcontroller.data.log.LogLevel
 
 /**
@@ -47,7 +48,7 @@ fun LogScreen(
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
-            "级别:${state.logLevel.label} · 最多保留 500 条 · 长按可选中文字",
+            "${BuildConfig.VERSION_NAME} · ${state.logLevel.label} · 长按可选中文字",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),

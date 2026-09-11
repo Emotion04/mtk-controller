@@ -12,8 +12,12 @@ android {
         applicationId = "magicau.mtkcontroller"
         minSdk = 33
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0-canary"
+        // Bumped on every hand-off APK. Leaving this at 1 made "did the update
+        // actually install?" unanswerable: the system treats an equal version
+        // code as the same build, so an install can quietly do nothing while
+        // the old code keeps running.
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
