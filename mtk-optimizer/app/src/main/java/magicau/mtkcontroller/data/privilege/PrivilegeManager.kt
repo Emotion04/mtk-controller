@@ -29,7 +29,10 @@ object PrivilegeManager {
     const val REQUEST_CODE = 4210
 
     private const val USER_SERVICE_TAG = "runtime"
-    private const val USER_SERVICE_VERSION = 1
+    // Bump whenever IRuntimeService changes. Shizuku keeps a daemon UserService
+    // by tag/version; without this it can keep the old AIDL implementation
+    // alive after an APK update and reject the new PowerHAL transactions.
+    private const val USER_SERVICE_VERSION = 2
     private const val USER_SERVICE_SUFFIX = "runtime"
     private const val BIND_TIMEOUT_MS = 10_000L
 

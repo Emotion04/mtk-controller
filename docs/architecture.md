@@ -1,5 +1,8 @@
 # Architecture
 
+产品边界、CPU 分段条手势、单值/区间语义、视觉 token 和迁移清单见
+[design.md](design.md)。本文件只保留工程分层、并发、设备适配和验证策略。
+
 ## Layers
 
 ```
@@ -50,8 +53,9 @@ Now it exists once, and the invariants are structural rather than remembered:
   lifetime** (they used to be split between DataStore and an in-memory field that vanished on
   restart)
 
-`CpuControlStore` is persistence. `CpuControl` is policy. `PowerHal` is wire format. `Sysfs`
-is kernel nodes. Each is replaceable without touching the others.
+`CpuControlStore` is persistence. `CpuControl` is policy and request-shape mapping.
+`PowerHal` is wire format. `RuntimeUserService` is the stable PowerHAL request owner.
+`Sysfs` is kernel-node access. Each is replaceable without touching the others.
 
 ### The same rule, one level down
 
@@ -166,5 +170,17 @@ Highest value first, all runnable without a device:
    command index, and a device report without it cannot be acted on.
 5. **`BackupRepository` import of an older file leaves absent fields alone.**
 
-Tests 1–3 need `PowerHal` to become an interface rather than an `object`. That is
-worth doing anyway.
+Tests 1–3 need the PowerHAL transport to be injectable rather than bound directly
+to the singleton. The production boundary is already isolated behind
+`PerfLockController`; add a fake transport there before writing broad UI tests.
+
+## Change review checklist
+
+Before merging a CPU or UI change, confirm:
+
+1. A point selection still emits one normalized value and does not depend on gesture direction.
+2. A range emits `low <= high` and only the soft pair.
+3. Every apply releases the previous handle before acquiring a new one.
+4. The daemon UserService version is bumped when its AIDL surface changes.
+5. The UI can distinguish applied, unavailable, unreadable and unverified states.
+6. `git status` contains no generated APK, reference material or sync temporary files unless explicitly requested.

@@ -61,6 +61,10 @@ app/src/main/java/magicau/mtkcontroller/
 - 无 root 时 `cpuset` / `stune` / `uclamp` 等调度级节点不可写,相关功能未包含
 - GPU 调频受厂商固件影响,设置可能被覆盖
 
+## 继续开发
+
+产品与工程契约见仓库根目录的 [`docs/design.md`](../docs/design.md)。其中明确了 CPU 分段条的三种手势、单值与区间的 PowerHAL 请求映射、UI token、About 页面和迁移检查表。当前真实状态和未解决问题以 [`docs/handoff.md`](../docs/handoff.md) 为准。
+
 ## 许可
 
 个人项目,未指定开源许可。

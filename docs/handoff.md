@@ -10,6 +10,17 @@ read-backs are blind there and the only usable measurements come from outside �
 that file records what is and is not observable, and what the device has actually
 been seen to do.
 
+> **最新检查点（2026-09-12，移交前）**
+>
+> 当前用户反馈：单值写入已经基本稳定；区间控制仍有问题，尚未证明是
+> UI、资源 ID、PowerHAL 合并规则还是设备动态限制。不要把区间标记为已修复。
+> 分段条的交互契约是：单击得到单值，第二次点击得到两点之间的范围，拖动得到
+> 拖过的范围；无论方向和先后，最终都必须写入 `min(low, high)` 到
+> `max(low, high)`。原参考 App 只支持写死频率，不能作为区间实现样本。
+>
+> 继续开发的产品与工程边界见 [design.md](design.md)。本文件的事实、开放问题和
+> 推测仍按后文分类；本段只用于让迁移后的下一位开发者先看到最新状态。
+
 ## How to read this document
 
 Three parts, and they are not equally trustworthy:
@@ -36,7 +47,9 @@ manager directly.
 - Package `magicau.mtkcontroller`, label **MTK God**
 - `versionCode 6` / `versionName 0.3.3`
 - `minSdk 33`, `targetSdk 37`, Kotlin + Compose + Material 3
-- Build: `cd mtk-optimizer && ./gradlew assembleDebug`
+- Build: `cd mtk-optimizer && ./gradlew assembleDebug` — see
+  [build-environment.md](build-environment.md) for the toolchain and the
+  one-file-per-machine `local.properties` step
 - **Bump `versionCode` on every hand-off build.** It was left at `1` for many
   builds; the system treats an equal version code as the same build, updates
   silently did nothing, and the user spent an evening reporting bugs in code that
@@ -213,7 +226,9 @@ stops taking effect. It happens rarely. Cause unidentified.
 ## P7 — Range support has never been demonstrated 🔴
 
 The protocol permits a floor/ceiling pair and MediaTek's own tests use asymmetric
-values, but **this app has never shown a range working on hardware**. See P1–P5.
+values, but **this app has never shown a range working on hardware**. The current
+single-value path is nearly stable according to the user; that does not validate
+the range path. See P1–P5 and [design.md](design.md#cpu-控制模型).
 
 ## P8 — Transaction codes are hardcoded 🟠
 
@@ -233,13 +248,17 @@ The prior implementation sent PowerHAL transactions through
 request owner shared and made handle cleanup vulnerable to a Shizuku process
 restart.
 
-**Implemented in 0.3.5, not yet verified on device:** acquire and release now
-run inside the app's daemon `RuntimeUserService`, matching the reference app's
-shape. `PowerHal` reaches it through `IRuntimeService`; the elevated service
-resolves `power_hal_mgr_service` and performs both binder transactions. The
-returned handle therefore belongs to one stable UserService process and is
-released from that same process. Check the runtime-service uid in the diagnostic
-report and verify repeated apply/release cycles with an external monitor.
+**Implemented in 0.3.6, not yet verified on device:** the reference app obtains
+`power_hal_mgr_service` through its own `RuntimeService` proxy; its final
+transactions therefore originate with that service rather than through a
+`ShizukuBinderWrapper`. This project now follows the same shape: `PowerHal`
+reaches the daemon `RuntimeUserService` through `IRuntimeService`, and that
+service resolves `power_hal_mgr_service` and performs both transactions. The
+returned handle belongs to one stable UserService process and is released from
+that same process. The UserService interface version was also incremented so
+Shizuku cannot retain a daemon built with the earlier AIDL schema. Check the
+runtime-service uid in the diagnostic report and verify repeated apply/release
+cycles with an external monitor.
 
 ## P10 — The app cannot read the frequency limits on this device 🔴
 
@@ -315,17 +334,25 @@ process spawns per screen visit. That is now a single batched call
 `CpuReapplyService` calls `CpuControl.apply` on a timer. It has never been run
 against a device already holding stale requests.
 
-## P16 — 0.3.5 single-value and range paths need hardware verification 🟠
+## P16 — 0.3.6 single-value and range paths need hardware verification 🟠
 
 The reference app's smali was rechecked. Its one-point control submits all four
 per-policy resources (`MIN`, `MAX`, `MIN_HL`, `MAX_HL`) with the same kHz value;
 the old app path was not the same as this app's soft-only pair.
 
-**Implemented in 0.3.5, not yet verified on device:** equal endpoints now send
+**Implemented in 0.3.6, not yet verified on device:** equal endpoints now send
 that same four-resource request, so one tap on the segment control is a genuine
 single-value lock. Unequal endpoints deliberately send only the soft `MIN` and
 `MAX` pair, preserving a range rather than accidentally turning it into a hard
 lock. The log names the selected path and its exact endpoints.
+
+**Updated by user feedback:** the equal-endpoint path is now nearly stable in
+practice; the unequal-endpoint path still has a real defect. Treat the range
+problem as active work. Before changing resource IDs, capture the exact command
+array and compare it with a successful single-value request on the same clean
+boot. Then test a narrow range whose upper bound is below the device's observed
+dynamic cap. Do not infer a failed range from `scaling_min_freq`/
+`scaling_max_freq` on the vivo V2430A because those nodes are unreadable there.
 
 ---
 
@@ -483,6 +510,7 @@ Nothing under `reference/` is needed to build or run the app.
 
 | task | file |
 |---|---|
+| toolchain versions and setup | [build-environment.md](build-environment.md) |
 | what the app looks like and how it is operated | [ui.md](ui.md) |
 | the protocol, with sources | [protocol.md](protocol.md) |
 | third-party reference material, and how to read it | `reference/README.md` |

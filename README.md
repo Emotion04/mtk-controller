@@ -26,22 +26,30 @@ effect on hardware**. Those are the problems worth attention.
 | [docs/protocol.md](docs/protocol.md) | MediaTek PowerHAL: ids, transactions, value semantics — with primary sources |
 | [docs/pitfalls.md](docs/pitfalls.md) | Mistakes already made here, and the rule each one produced |
 | [docs/architecture.md](docs/architecture.md) | Layers, the `CpuControl` invariants, device adaptation, testing |
+| [docs/design.md](docs/design.md) | Product architecture, CPU gesture contract, UI design system, migration checklist |
 | [docs/ui.md](docs/ui.md) | Screens, navigation, the segment bar's gestures, design language |
 | [docs/powerhal-resources.md](docs/powerhal-resources.md) | The full resource namespace, 172 entries, with source links |
 | [docs/handoff.md](docs/handoff.md) | Current state, open problems, what to do next |
+| [docs/build-environment.md](docs/build-environment.md) | Exact toolchain versions, SDK packages, setup steps, known friction |
 | [docs/device-vivo-v2430a.md](docs/device-vivo-v2430a.md) | What the development device exposes — and what it does not |
 
 ## Building
 
 ```bash
 cd mtk-optimizer
+printf 'sdk.dir=%s
+' "<PATH_TO_ANDROID_SDK>" > local.properties   # git-ignored, one per machine
 ./gradlew assembleDebug
 # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Requires JDK 17 and the Android SDK (`compileSdk 37`). The app is signed with the debug
-keystore by default; any signature works for local use — Android requires a signature to
-install at all.
+JDK 17 + Android SDK (platform `android-37`, build-tools `36.0.0`). The full
+list, the exact versions this project was developed against, and the Windows
+file-locking workaround are in
+[docs/build-environment.md](docs/build-environment.md).
+
+Any signature works for local use — Android requires one to install at all, and
+debug builds get the standard debug keystore automatically.
 
 ## Requirements on device
 
